@@ -1,0 +1,6 @@
+name = "inblogauto-cron"
+main = "cron-worker.js"
+compatibility_date = "2026-03-22"
+
+[triggers]
+crons = ["50 21 * * *"]
