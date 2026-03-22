@@ -121,29 +121,11 @@ cronApp.post('/', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
-      // 이미지 생성 — 짧은 영문 프롬프트 + Pollinations
-      const shortKeyword = kw.keyword.replace(/\s+/g, ' ').trim()
-      const thumbSeed = Date.now()
-      const infoSeed = thumbSeed + 7
-
-      // 1) 썸네일 (상단 대표 이미지)
-      const thumbPrompt = `dental ${classified.type === 'B' ? 'procedure' : classified.type === 'C' ? 'recovery care' : classified.type === 'D' ? 'comparison' : 'treatment'} medical illustration, blue white, clean flat design, no text, no face`
-      const thumbnailUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(thumbPrompt)}?width=1200&height=630&seed=${thumbSeed}&nologo=true`
-
-      // 2) 본문 인포그래픽 (유형별 맞춤)
-      const infoPrompt = buildInfographicPrompt(shortKeyword, classified.type, bestContent.title)
-      const infoImageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(infoPrompt)}?width=1200&height=800&seed=${infoSeed}&nologo=true`
-
-      // 이미지 실제 생성 확인 (fetch로 프리로드 — Pollinations는 첫 요청 시 생성)
-      try {
-        const [thumbResp, infoResp] = await Promise.allSettled([
-          fetch(thumbnailUrl, { method: 'GET', redirect: 'follow' }),
-          fetch(infoImageUrl, { method: 'GET', redirect: 'follow' })
-        ])
-        console.log(`썸네일: ${thumbResp.status === 'fulfilled' ? thumbResp.value.status : 'failed'}, 인포: ${infoResp.status === 'fulfilled' ? infoResp.value.status : 'failed'}`)
-      } catch (e) {
-        console.log('이미지 프리로드 스킵:', e)
-      }
+      // 이미지 — Unsplash 고품질 치과/의료 이미지 (항상 안정적)
+      const thumbImg = getDentalImage(kw.category || 'general', 'thumbnail')
+      const infoImg = getDentalImage(kw.category || 'general', 'infographic', classified.type)
+      const thumbnailUrl = thumbImg.url
+      const infoImageUrl = infoImg.url
 
       // 콘텐츠 HTML에 인포그래픽(본문 중간) + 썸네일(상단) 삽입
       let finalHtml = bestContent.content_html
@@ -153,13 +135,13 @@ cronApp.post('/', async (c) => {
       if (firstH2End !== -1) {
         const afterFirstH2 = finalHtml.indexOf('<h2', firstH2End + 5)
         if (afterFirstH2 !== -1) {
-          const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${shortKeyword} 인포그래픽" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">▲ ${shortKeyword} 관련 다이어그램</figcaption></figure>`
+          const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${kw.keyword} 관련 이미지" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">${infoImg.caption}</figcaption></figure>`
           finalHtml = finalHtml.slice(0, afterFirstH2) + infographicHtml + finalHtml.slice(afterFirstH2)
         }
       }
 
       // 2) 상단 썸네일
-      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${shortKeyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">${shortKeyword} 관련 이미지</figcaption></figure>` + finalHtml
+      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
       // DB 저장
       const insertResult = await c.env.DB.prepare(
@@ -312,17 +294,125 @@ ${region ? '참고 지역: ' + region : ''}
 
 const cronHandler = cronApp
 
-// ===== 콘텐츠 유형별 인포그래픽 프롬프트 (짧고 안정적) =====
-function buildInfographicPrompt(keyword: string, contentType: string, title: string): string {
-  switch (contentType) {
-    case 'B':
-      return `step by step dental procedure diagram, numbered stages, medical cross section, anatomical illustration, blue white clean flat design, no text no face`
-    case 'C':
-      return `dental recovery timeline infographic, healing stages, do and dont icons, medical care illustration, blue white clean flat design, no text no face`
-    case 'D':
-      return `side by side dental comparison diagram, two options, pros cons layout, versus split design, blue white clean flat design, no text no face`
-    default:
-      return `dental treatment medical infographic diagram, anatomical illustration, clean informational layout, blue white flat design, no text no face`
+// ===== Unsplash 치과/의료 이미지 풀 (항상 안정적, 고품질) =====
+function getDentalImage(category: string, purpose: 'thumbnail' | 'infographic', contentType?: string): { url: string; caption: string } {
+  // 카테고리별 + 용도별 Unsplash 이미지 (모두 검증된 URL)
+  const images: Record<string, { thumb: string[]; info: Record<string, string[]> }> = {
+    implant: {
+      thumb: [
+        'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
+      ],
+      info: {
+        B: [
+          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
+        ],
+        C: [
+          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
+        ],
+        D: [
+          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
+        ],
+      }
+    },
+    orthodontics: {
+      thumb: [
+        'https://images.unsplash.com/photo-1606811971618-4486d14f3f99?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1570612861542-284f4c12e75f?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=1200&h=630&fit=crop&q=80',
+      ],
+      info: {
+        B: [
+          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=800&fit=crop&q=80',
+        ],
+        C: [
+          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
+        ],
+        D: [
+          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
+        ],
+      }
+    },
+    general: {
+      thumb: [
+        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
+      ],
+      info: {
+        B: [
+          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
+        ],
+        C: [
+          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
+        ],
+        D: [
+          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
+          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
+        ],
+      }
+    },
+    prevention: {
+      thumb: [
+        'https://images.unsplash.com/photo-1606811971618-4486d14f3f99?w=1200&h=630&fit=crop&q=80',
+        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
+      ],
+      info: {
+        B: [
+          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
+        ],
+        C: [
+          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
+        ],
+        D: [
+          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
+        ],
+      }
+    },
+    local: {
+      thumb: [
+        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
+      ],
+      info: {
+        B: [
+          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
+        ],
+        C: [
+          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
+        ],
+        D: [
+          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
+        ],
+      }
+    }
+  }
+
+  const pool = images[category] || images.general
+  const now = Date.now()
+
+  if (purpose === 'thumbnail') {
+    const idx = now % pool.thumb.length
+    return { url: pool.thumb[idx], caption: '' }
+  } else {
+    const type = contentType || 'B'
+    const infoPool = pool.info[type] || pool.info.B
+    const idx = (now + 3) % infoPool.length
+    const captions: Record<string, string> = {
+      B: '▲ 시술 과정 참고 이미지',
+      C: '▲ 회복 관리 참고 이미지',
+      D: '▲ 치료 옵션 비교 참고 이미지',
+    }
+    return { url: infoPool[idx], caption: captions[type] || '▲ 참고 이미지' }
   }
 }
 
