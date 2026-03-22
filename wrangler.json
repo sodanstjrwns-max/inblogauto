@@ -11,7 +11,4 @@
       "database_id": "local-dev-db"
     }
   ]
-  // NOTE: Cron Trigger (매일 KST 06:50 = UTC 21:50)는
-  // Cloudflare Dashboard > Workers & Pages > Settings > Triggers에서 설정
-  // Pages 프로젝트의 wrangler.json에서는 triggers 지원하지 않음
 }
