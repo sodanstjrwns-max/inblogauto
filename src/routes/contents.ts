@@ -255,7 +255,7 @@ contentRoutes.post('/generate', async (c) => {
   let thumbnailUrl = ''
   let thumbnailPrompt = ''
   try {
-    const thumbResult = await generateThumbnail(keyword_text, bestContent.title)
+    const thumbResult = await generateThumbnail(keyword_text, bestContent.title, c.env)
     thumbnailUrl = thumbResult.url
     thumbnailPrompt = thumbResult.prompt
   } catch (e) {
@@ -365,7 +365,7 @@ ${region ? `참고 지역: ${region}` : ''}
   }
 }
 
-// ===== SEO 품질 점수 (콘텐츠 생산 지침 섹션 9 기준) =====
+// ===== SEO 품질 + 의료광고법 준수 점수 (강화 버전) =====
 function calculateSeoScore(content: any, keyword: string): number {
   let score = 0
   const title = content.title || ''
@@ -375,6 +375,9 @@ function calculateSeoScore(content: any, keyword: string): number {
   const tags = content.tags || []
   const faq = content.faq || []
   const plainText = html.replace(/<[^>]*>/g, '')
+
+  // ===== 감점 사항 기록 =====
+  const violations: string[] = []
 
   // ===== 1. 키워드 구조 (20점) =====
   // 제목에 키워드 포함 (7점)
@@ -386,7 +389,6 @@ function calculateSeoScore(content: any, keyword: string): number {
   const h2Matches = html.match(/<h2[^>]*>(.*?)<\/h2>/gi) || []
   const h2WithKeyword = h2Matches.filter(h => {
     const h2Text = h.replace(/<[^>]*>/g, '')
-    // 키워드 일부 단어라도 포함
     const kwWords = keyword.split(/\s+/)
     return kwWords.some(w => h2Text.includes(w))
   })
@@ -394,69 +396,170 @@ function calculateSeoScore(content: any, keyword: string): number {
   else if (h2WithKeyword.length >= 1) score += 3
 
   // ===== 2. 정보 완결성 (20점) =====
-  // 수치/기간 포함 (5점) — 숫자 + 단위
-  const hasNumbers = /\d+[\s]*(만\s*원|원|%|개월|주|일|시간|분|mm|회|개|년)/.test(plainText)
+  // 수치/기간 포함 (5점)
+  const hasNumbers = /\d+[\s]*(만\s*원|원|%|개월|주|일|시간|분|mm|회|개|년|cc|mg)/.test(plainText)
   if (hasNumbers) score += 5
   // FAQ 포함 (10점)
   if (faq.length >= 5) score += 10
   else if (faq.length >= 3) score += 5
-  // 비교/조건 정보 포함 (5점) — 목록이나 표 사용
+  // 목록이나 표 사용 (5점)
   const hasList = html.includes('<ul') || html.includes('<ol') || html.includes('<table')
   if (hasList) score += 5
 
   // ===== 3. 분량 (15점) =====
   if (plainText.length >= 1500) score += 15
-  else if (plainText.length >= 1200) score += 5
-  // 1000자 미만이면 0점
+  else if (plainText.length >= 1200) score += 10
+  else if (plainText.length >= 800) score += 5
 
-  // ===== 4. SEO 구조 (20점) =====
-  // H2 4개 이상 (10점)
+  // ===== 4. SEO 구조 (15점) =====
+  // H2 4개 이상 (8점)
   const h2Count = (html.match(/<h2/gi) || []).length
-  if (h2Count >= 4) score += 10
-  else if (h2Count >= 3) score += 5
-  // 슬러그 형식 (5점)
+  if (h2Count >= 4) score += 8
+  else if (h2Count >= 3) score += 4
+  // 슬러그 형식 (4점)
   const slugWords = slug.split('-').filter(Boolean)
-  if (slugWords.length >= 3 && slugWords.length <= 5 && /^[a-z0-9-]+$/.test(slug)) score += 5
-  // 메타 설명 길이 (5점)
-  if (meta.length >= 120 && meta.length <= 160) score += 5
-  else if (meta.length >= 80 && meta.length <= 200) score += 2
+  if (slugWords.length >= 3 && slugWords.length <= 6 && /^[a-z0-9-]+$/.test(slug)) score += 4
+  // 메타 설명 길이 (3점)
+  if (meta.length >= 120 && meta.length <= 160) score += 3
+  else if (meta.length >= 80 && meta.length <= 200) score += 1
 
-  // ===== 5. 어조 준수 (15점) =====
-  // 홍보 표현 없음 (10점) — 발견 시 -10점
-  const spamPatterns = [
-    '저희 병원', '우리 병원', '최고의', '최첨단', '합리적인 가격',
-    '편안한 진료', '친절한 상담', '최신 장비', '믿을 수 있는',
-    '최선을 다', '걱정하지 마', '빠른 쾌유', '많은 분들이',
-    '사실 이것이 중요', '안녕하세요', '오늘은.*알아보겠습니다'
+  // ===== 5. 의료광고법 위반 검사 (30점 — 위반 시 감점) =====
+  let medLawScore = 30
+
+  // 5-1. 병원명/원장명 노출 금지 (-10점)
+  const clinicNamePatterns = [
+    '저희 병원', '우리 병원', '본원', '당원', '본 치과', '우리 치과',
+    '원장님', '대표원장', '의료진 소개',
+    /[가-힣]{2,4}치과/,  // "XX치과" 패턴
+    /[가-힣]{2,3}원장/,  // "X원장" 패턴
   ]
-  const hasSpam = spamPatterns.some(p => new RegExp(p).test(plainText))
-  if (!hasSpam) score += 10
-  // 과장 표현 없음 (5점)
-  const exaggerations = ['100% 성공', '완벽하게', '완벽한', '무조건', '반드시 낫', '확실히 효과']
-  const hasExaggeration = exaggerations.some(e => plainText.includes(e))
-  if (!hasExaggeration) score += 5
-
-  // ===== 6. 면책 문구 (10점) =====
-  if (html.includes('의료 안내') && (html.includes('치과의사와 상담') || html.includes('치과 전문의'))) {
-    score += 10
-  } else if (html.includes('의료 안내') || html.includes('면책') || html.includes('상담하시기 바랍니다')) {
-    score += 5
+  for (const pat of clinicNamePatterns) {
+    if (typeof pat === 'string') {
+      if (plainText.includes(pat)) { medLawScore -= 10; violations.push(`병원명/원장명 노출: "${pat}"`); break }
+    } else {
+      if (pat.test(plainText)) { medLawScore -= 10; violations.push(`병원명/원장명 패턴 감지`); break }
+    }
   }
 
-  // ===== 추가 보너스 (감점 없이 최대 100점 보정) =====
-  // 제목 길이 적정 (40~65자)
-  if (title.length >= 40 && title.length <= 65) score += 0 // 이미 키워드 구조에 포함
-  // 태그 4~8개
-  if (tags.length >= 4 && tags.length <= 8) score += 0 // 이미 충분
+  // 5-2. 홍보/광고성 표현 금지 (-8점)
+  const promoPatterns = [
+    '최고의', '최첨단', '합리적인 가격', '편안한 진료', '친절한 상담',
+    '최신 장비', '믿을 수 있는', '최선을 다', '걱정하지 마',
+    '빠른 쾌유', '안심하', '특별한 혜택', '이벤트', '할인',
+    '무료 상담', '무료 검진', '지금 바로', '서둘러', '한정',
+    '전문적인 치료', '숙련된', '풍부한 경험', '다년간',
+    '첨단 시스템', '명의', '실력 있는'
+  ]
+  const foundPromo = promoPatterns.filter(p => plainText.includes(p))
+  if (foundPromo.length > 0) { 
+    medLawScore -= Math.min(8, foundPromo.length * 3)
+    violations.push(`홍보성 표현: ${foundPromo.slice(0, 3).join(', ')}`)
+  }
+
+  // 5-3. 치료 결과 보장/과장 금지 (-8점)
+  const guaranteePatterns = [
+    '100% 성공', '완벽하게', '완벽한 결과', '무조건', '반드시 낫',
+    '확실히 효과', '보장합니다', '약속합니다', '틀림없이',
+    '부작용 없', '통증 없이', '안전하게 보장', '절대 실패',
+    '완전 회복', '즉각적인 효과', '영구적', '평생 사용',
+    '단 한 번으로', '고통 없는'
+  ]
+  const foundGuarantee = guaranteePatterns.filter(p => plainText.includes(p))
+  if (foundGuarantee.length > 0) {
+    medLawScore -= Math.min(8, foundGuarantee.length * 4)
+    violations.push(`결과 보장/과장: ${foundGuarantee.slice(0, 3).join(', ')}`)
+  }
+
+  // 5-4. 타병원 비교/비방 금지 (-4점)
+  const comparisonPatterns = [
+    '다른 병원보다', '타 병원', '일반 치과와 달리', '다른 곳에서는',
+    '여기만', '오직 우리만', '유일하게'
+  ]
+  const foundComparison = comparisonPatterns.filter(p => plainText.includes(p))
+  if (foundComparison.length > 0) {
+    medLawScore -= 4
+    violations.push(`타병원 비교: ${foundComparison.slice(0, 2).join(', ')}`)
+  }
+
+  score += Math.max(0, medLawScore)
+
+  // ===== 6. 면책 문구 (추가 보너스, 필수) =====
+  // 의료 면책 문구가 없으면 감점 (-5점)
+  const hasDisclaimer = html.includes('의료 안내') && (html.includes('치과의사와 상담') || html.includes('치과 전문의') || html.includes('상담하시기 바랍니다'))
+  if (hasDisclaimer) {
+    // 정상 — 보너스 없음 (이미 의료법 30점에 포함)
+  } else if (html.includes('의료 안내') || html.includes('면책') || html.includes('상담하시기')) {
+    score -= 2 // 불완전 면책
+    violations.push('면책 문구 불완전')
+  } else {
+    score -= 5 // 면책 문구 없음
+    violations.push('면책 문구 없음')
+  }
+
+  // ===== 7. 인사말/빈말 체크 (-3점) =====
+  const fluffPatterns = [
+    '안녕하세요', '오늘은.*알아보겠습니다', '많은 분들이 걱정',
+    '사실 이것이 중요', '경우에 따라 다릅니다', '개인차가 있습니다'
+  ]
+  const foundFluff = fluffPatterns.filter(p => new RegExp(p).test(plainText))
+  if (foundFluff.length > 0) {
+    score -= Math.min(3, foundFluff.length * 1)
+    violations.push(`빈말/인사말: ${foundFluff.length}개`)
+  }
+
+  // 결과 저장 (violations는 로깅 용도)
+  if (violations.length > 0) {
+    console.log(`[SEO 검증] "${keyword}" 위반사항: ${violations.join(' | ')}`)
+  }
 
   return Math.min(100, Math.max(0, score))
 }
 
-// ===== 썸네일 생성 =====
-async function generateThumbnail(keyword: string, title: string): Promise<{ url: string; prompt: string }> {
-  const prompt = `Clean, professional dental medical illustration for: ${keyword}. Modern minimalist style, soft blue and white color palette, no text overlay, suitable for a medical blog thumbnail.`
+// ===== 썸네일 생성 (실제 AI 이미지 생성) =====
+async function generateThumbnail(keyword: string, title: string, env?: any): Promise<{ url: string; prompt: string }> {
+  const prompt = `Clean professional dental medical infographic illustration about "${keyword}". Modern minimalist flat design, soft blue (#e8f4fd) and white color palette, medical icons, no text overlay, no human faces, suitable for medical blog OG image thumbnail 1200x630.`
+  
+  // 폴백용 플레이스홀더
   const placeholderUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(keyword)}&font=sans-serif`
-  return { url: placeholderUrl, prompt }
+
+  try {
+    // 방법 1: Pollinations AI (무료, API 키 불필요)
+    const encodedPrompt = encodeURIComponent(prompt)
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=flux&nologo=true&seed=${Date.now()}`
+    
+    // URL 생성만 하고 이미지 접근성 확인 (실제 이미지는 Inblog 크롤러가 가져감)
+    const checkResponse = await fetch(pollinationsUrl, { method: 'HEAD', redirect: 'follow' })
+    
+    if (checkResponse.ok || checkResponse.status === 302 || checkResponse.status === 301) {
+      return { url: pollinationsUrl, prompt }
+    }
+    
+    // 방법 2: Workers AI 바인딩 사용 (프로덕션에서 AI 바인딩 설정 시)
+    if (env?.AI) {
+      try {
+        const aiResult = await env.AI.run('@cf/stabilityai/stable-diffusion-xl-base-1.0', {
+          prompt: prompt,
+          width: 1200,
+          height: 630
+        })
+        // Workers AI는 바이너리 이미지를 반환 — R2에 업로드 필요
+        if (env?.R2 && aiResult) {
+          const key = `thumbnails/${Date.now()}-${keyword.replace(/\s+/g, '-').substring(0, 30)}.png`
+          await env.R2.put(key, aiResult, { httpMetadata: { contentType: 'image/png' } })
+          // R2 퍼블릭 URL 또는 커스텀 도메인 필요
+          return { url: `/${key}`, prompt }
+        }
+      } catch (aiErr) {
+        console.error('Workers AI 썸네일 생성 실패:', aiErr)
+      }
+    }
+
+    // Pollinations URL을 직접 반환 (GET 시 이미지 생성됨)
+    return { url: pollinationsUrl, prompt }
+  } catch (e) {
+    console.error('썸네일 생성 실패, 플레이스홀더 사용:', e)
+    return { url: placeholderUrl, prompt }
+  }
 }
 
 // ===== 외부에서 사용할 수 있도록 export =====

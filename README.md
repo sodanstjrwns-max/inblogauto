@@ -7,24 +7,35 @@
 - **기술 스택**: Hono + Cloudflare Workers + D1 + Tailwind CSS + Claude API + Inblog REST API
 - **핵심 가치**: SEO 자산 자동 적립 (연간 1,095건 구글 인덱싱)
 
+## URLs
+- **샌드박스 미리보기**: https://3000-iz9s1vk8l39aulog3daur-a402f90a.sandbox.novita.ai
+- **프로덕션**: Cloudflare Pages 배포 대기 (Deploy 탭에서 API 키 설정 필요)
+
 ## 완성된 기능
 
 ### Layer 1 — 키워드 엔진
-- 치과 키워드 DB 313개 내장 (임플란트/교정/일반치료/예방/지역)
+- **치과 키워드 DB 513개** 내장 (임플란트 118 / 일반치료 122 / 예방관리 116 / 교정미용 105 / 지역병원 52)
 - 카테고리별 가중치 기반 자동 선택
 - 중복 방지 (사용횟수 + 마지막 사용일 추적)
+- 카테고리별 소진율 실시간 모니터링
 - 커스텀 키워드 수동 추가/삭제/활성화 관리
 
 ### Layer 2 — 콘텐츠 엔진 (AI)
 - Claude API (Sonnet) 연동 SEO 콘텐츠 자동 생성
 - **콘텐츠 유형 자동 분류**: A(비용/가격), B(시술과정), C(회복/주의사항), D(비교/선택)
 - **환자 질문 기반 글쓰기**: 키워드 → 환자 질문 자동 정의 → 질문에 직접 답하는 구조
-- SEO 품질 점수 자동 채점 (100점 만점, 80점 미만 재생성)
-  - 키워드 구조 20점, 정보 완결성 20점, 분량 15점, SEO 구조 20점, 어조 15점, 면책 10점
-- 홍보성 문구 자동 제거 (의료법 준수)
-- 병원명 노출 금지 (정보 제공형 콘텐츠)
-- 의료 면책 문구 자동 삽입
-- 썸네일 자동 생성 및 콘텐츠 내 삽입
+- **SEO 품질 + 의료광고법 준수 점수** 자동 채점 (100점 만점, 80점 미만 재생성)
+  - 키워드 구조 20점, 정보 완결성 20점, 분량 15점, SEO 구조 15점
+  - **의료광고법 위반 검사 30점** (5개 카테고리):
+    - 병원명/원장명 노출 금지 (-10점)
+    - 홍보/광고성 표현 금지 (-8점)
+    - 치료 결과 보장/과장 금지 (-8점)
+    - 타병원 비교/비방 금지 (-4점)
+    - 면책 문구 필수 (-5점)
+  - 인사말/빈말 감점 (-3점)
+- **AI 썸네일 자동 생성**: Pollinations AI 연동 (1200x630 OG 이미지)
+  - 치과 의료 전문 일러스트레이션 자동 생성
+  - Workers AI 폴백 지원 (프로덕션 옵션)
 - 키워드 밀도 제어 (1,500자 기준 3~5회)
 
 ### Layer 3 — 발행 엔진 (Inblog JSON:API v1.0)
@@ -32,25 +43,25 @@
 - **GET /me**: API 키 검증 + subdomain/blog_id 자동 조회
 - **POST /posts**: JSON:API `data.attributes` 형식 포스트 생성 (draft)
 - **PATCH /posts/{id}/publish**: 즉시 발행 / 예약 발행 / 발행 취소
-- **태그 자동 동기화**: 콘텐츠 태그 → Inblog 태그 자동 생성/매핑 (GET /tags, POST /tags, POST /posts/{id}/tags)
+- **태그 자동 동기화**: 콘텐츠 태그 → Inblog 태그 자동 생성/매핑
 - **2단계 워크플로**: 포스트 생성(draft) → 발행(publish) 분리
 - 실패 감지 → 최대 3회 자동 재시도
 - 슬러그 중복 시 타임스탬프 자동 추가
 - **자동 발행 모드**: cron에서 생성 즉시 발행까지 원스톱 처리
 
 ### 대시보드 (5개 화면)
-1. **Dashboard** — 오늘 발행 현황, 주간 차트, 카테고리 분포, 예정 키워드, 실패 알림
+1. **Dashboard** — 오늘 현황, 발행 성공률, 평균 SEO 점수, 7일/30일 트렌드 차트 전환, 카테고리 분포, 키워드 DB 현황(513개/소진율), SEO 점수 분포(우수/양호/보통/개선필요), 다음 발행 예정, 최근 실패, 최근 성공 발행 목록
 2. **Keywords** — 키워드 DB 검색/필터/추가/삭제, 카테고리별 관리
-3. **Schedule** — 발행 시간/건수 설정, 카테고리 배분 비율
-4. **History** — 콘텐츠 생성 이력, 상태 필터, 미리보기, 수동 발행
-5. **Settings** — API 키(검증 기능 포함), 병원 정보, 알림, 의료 면책 문구 관리
+3. **Schedule** — 발행 시간/건수 설정, 카테고리 배분 비율, 자동화 플로우 시각화
+4. **History** — 콘텐츠 생성 이력, 상태 필터(전체/발행됨/생성됨/실패), 미리보기, 수동 발행
+5. **Settings** — API 키(검증 기능 포함), 병원 정보, 알림, 자동 발행 토글, 의료 면책 문구 관리
 
 ## API 엔드포인트
 
 | Method | Path | 설명 |
 |--------|------|------|
 | GET | `/api/health` | 헬스체크 |
-| GET | `/api/dashboard/stats` | 대시보드 통계 |
+| GET | `/api/dashboard/stats` | 대시보드 통계 (완전 구현) |
 | GET | `/api/keywords?limit=&offset=&category=&search=` | 키워드 목록 |
 | GET | `/api/keywords/stats` | 키워드 통계 |
 | POST | `/api/keywords` | 키워드 추가 |
@@ -60,8 +71,8 @@
 | GET | `/api/contents?limit=&status=` | 콘텐츠 목록 |
 | GET | `/api/contents/:id` | 콘텐츠 상세 |
 | POST | `/api/contents/generate` | AI 콘텐츠 생성 |
-| POST | `/api/publish/verify` | **인블로그 API 키 검증 (GET /me)** |
-| POST | `/api/publish/:contentId` | **인블로그 발행 (JSON:API)** |
+| POST | `/api/publish/verify` | 인블로그 API 키 검증 (GET /me) |
+| POST | `/api/publish/:contentId` | 인블로그 발행 (JSON:API) |
 | POST | `/api/publish/retry/:logId` | 발행 재시도 |
 | GET | `/api/publish/tags` | 인블로그 태그 목록 조회 |
 | GET | `/api/schedule` | 스케줄 조회 |
@@ -110,7 +121,7 @@
 
 ## 데이터 모델
 
-- **keywords** — 치과 키워드 DB (카테고리, 검색의도, 우선순위, 사용횟수)
+- **keywords** — 치과 키워드 DB 513개 (카테고리, 검색의도, 우선순위, 사용횟수)
 - **contents** — 생성된 SEO 콘텐츠 (제목, 슬러그, 메타, HTML, 태그, FAQ, 썸네일, SEO점수)
 - **publish_logs** — 발행 이력 (inblog_post_id, inblog_url, 상태, 재시도횟수, 에러메시지)
 - **schedules** — 스케줄 설정 (발행건수, 시간, 카테고리 비율)
@@ -124,6 +135,7 @@
 2. Settings 탭에서 **인블로그 API 키** 입력 → **[검증]** 버튼으로 연결 확인
    - subdomain, blog_id, 권한(scopes) 자동 표시
    - 필수 권한: `posts:write`, `tags:read`, `tags:write`
+   - API 키 생성: 인블로그 대시보드 → Settings → API Keys → "Create new API key"
 3. Settings 탭에서 **병원 지역** 입력 (선택)
 4. Schedule 탭에서 발행 건수/시간/카테고리 비율 설정
 
@@ -139,23 +151,23 @@
 ## 콘텐츠 생성 규칙
 - **환자 질문 기반**: 모든 글은 하나의 환자 질문에 답하는 구조
 - **4가지 유형**: A(비용/가격), B(시술과정), C(회복/주의사항), D(비교/선택)
-- **홍보성 문구 금지**: "최고", "최첨단", "합리적인 가격" 등 광고성 표현 제거
-- **병원명 노출 금지**: 정보 제공형 콘텐츠로만 작성
-- **의료법 준수 (YMYL)**: 효과 보장 금지, 비교 광고 금지, 비용 단정 금지
+- **홍보성 문구 금지**: "최고", "최첨단", "합리적인 가격" 등 광고성 표현 감지 시 SEO 감점
+- **병원명 노출 금지**: 정보 제공형 콘텐츠로만 작성, 위반 시 -10점
+- **의료광고법 준수 (YMYL)**: 효과 보장 금지, 비교 광고 금지, 비용 단정 금지
 - **E-E-A-T 기준**: 경험/전문성/권위/신뢰 갖춘 콘텐츠
 - **SEO 기준**: 제목 40~65자, 메타 120~160자, H2 4~6개, FAQ 5~7개, 본문 1,500자+
 
 ## 배포
 - **플랫폼**: Cloudflare Pages
 - **기술 스택**: Hono + TypeScript + Tailwind CSS + D1 + Claude API + Inblog API
-- **Status**: ✅ Active
+- **Status**: ✅ Active (Sandbox) / ⏳ Cloudflare 배포 대기
 - **Last Updated**: 2026-03-22
 
 ## 다음 단계 (미구현)
-- [ ] 실제 이미지 생성 API 연동 (현재 placeholder)
 - [ ] Google Search Console 연동 (성과 추적 — Inblog API 지원)
 - [ ] Analytics 연동 (트래픽/포스트 성과 — Inblog API 지원)
 - [ ] Patient Signal 연동 (AI 검색 키워드 역추적)
 - [ ] 이메일 알림 (Resend 연동)
 - [ ] 멀티 병원 지원
 - [ ] 페이션트퍼널 수강생 온보딩 화면
+- [ ] Cloudflare Workers AI 바인딩 (R2 기반 이미지 저장)

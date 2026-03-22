@@ -11,8 +11,9 @@ export type Bindings = {
   DB: D1Database
   CLAUDE_API_KEY: string
   INBLOG_API_KEY: string
-  INBLOG_SITE_ID: string
   THUMBNAIL_API_KEY: string
+  AI?: any  // Cloudflare Workers AI (optional)
+  R2?: R2Bucket  // Cloudflare R2 Storage (optional)
 }
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -229,6 +230,9 @@ function getIndexHtml(): string {
     async function renderDashboard() {
       const data = await api('/dashboard/stats');
       dashboardData = data;
+      const kwStats = data.keyword_stats || {};
+      const seoDist = data.seo_distribution || {};
+      const dailyRpt = data.daily_report || {};
       const c = document.getElementById('page-content');
       c.innerHTML = \`
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -243,48 +247,57 @@ function getIndexHtml(): string {
               </div>
             </div>
             <div class="mt-3 bg-gray-100 rounded-full h-2">
-              <div class="bg-primary-500 h-2 rounded-full transition-all" style="width: \${data.today_scheduled ? (data.today_published/data.today_scheduled*100) : 0}%"></div>
+              <div class="bg-primary-500 h-2 rounded-full transition-all" style="width: \${data.today_scheduled ? Math.min(100, data.today_published/data.today_scheduled*100) : 0}%"></div>
             </div>
           </div>
           <div class="card p-5 stat-card">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-sm text-gray-500">총 누적 발행</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.total_published || 0}<span class="text-base font-normal text-gray-400">건</span></p>
+                <p class="text-sm text-gray-500">총 발행 / 대기</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.total_published || 0}<span class="text-base font-normal text-gray-400"> / \${data.draft_count || 0}</span></p>
               </div>
               <div class="w-12 h-12 bg-success-50 rounded-xl flex items-center justify-center">
                 <i class="fas fa-layer-group text-success-500 text-lg"></i>
               </div>
             </div>
+            <p class="text-xs text-gray-400 mt-2">총 \${data.total_contents || 0}건 생성됨</p>
           </div>
           <div class="card p-5 stat-card">
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm text-gray-500">평균 SEO 점수</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.avg_seo_score || 0}<span class="text-base font-normal text-gray-400">점</span></p>
+                <p class="text-2xl font-bold \${(data.avg_seo_score||0)>=80?'text-green-600':(data.avg_seo_score||0)>=60?'text-yellow-600':'text-red-600'} mt-1">\${data.avg_seo_score || 0}<span class="text-base font-normal text-gray-400">점</span></p>
               </div>
               <div class="w-12 h-12 bg-warning-50 rounded-xl flex items-center justify-center">
                 <i class="fas fa-star text-warning-500 text-lg"></i>
               </div>
             </div>
+            <p class="text-xs text-gray-400 mt-2">우수 \${seoDist.excellent||0} | 양호 \${seoDist.good||0} | 보통 \${seoDist.average||0} | 개선필요 \${seoDist.poor||0}</p>
           </div>
           <div class="card p-5 stat-card">
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm text-gray-500">발행 성공률</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.success_rate || 0}<span class="text-base font-normal text-gray-400">%</span></p>
+                <p class="text-2xl font-bold \${(data.success_rate||0)>=90?'text-green-600':(data.success_rate||0)>=70?'text-yellow-600':'text-red-600'} mt-1">\${data.success_rate || 0}<span class="text-base font-normal text-gray-400">%</span></p>
               </div>
               <div class="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center">
                 <i class="fas fa-check-circle text-green-500 text-lg"></i>
               </div>
             </div>
+            <p class="text-xs text-gray-400 mt-2">실패 \${data.failed_count||0}건</p>
           </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div class="card p-5 lg:col-span-2">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-chart-bar mr-2 text-primary-500"></i>주간 발행량</h3>
-            <canvas id="weeklyChart" height="200"></canvas>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-semibold text-gray-900"><i class="fas fa-chart-area mr-2 text-primary-500"></i>발행 추이</h3>
+              <div class="flex gap-2">
+                <button onclick="switchChartPeriod('week')" class="chart-period-btn text-xs px-3 py-1 rounded-full bg-primary-100 text-primary-700 font-medium" data-period="week">7일</button>
+                <button onclick="switchChartPeriod('month')" class="chart-period-btn text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-500" data-period="month">30일</button>
+              </div>
+            </div>
+            <canvas id="trendChart" height="200"></canvas>
           </div>
           <div class="card p-5">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-chart-pie mr-2 text-primary-500"></i>카테고리 분포</h3>
@@ -292,18 +305,57 @@ function getIndexHtml(): string {
           </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-database mr-2 text-primary-500"></i>키워드 현황</h3>
+            <div class="space-y-3">
+              <div class="flex justify-between text-sm"><span class="text-gray-500">전체 키워드</span><span class="font-semibold">\${kwStats.total||0}개</span></div>
+              <div class="flex justify-between text-sm"><span class="text-gray-500">활성 키워드</span><span class="font-semibold text-green-600">\${kwStats.active||0}개</span></div>
+              <div class="flex justify-between text-sm"><span class="text-gray-500">미사용 키워드</span><span class="font-semibold text-blue-600">\${kwStats.unused||0}개</span></div>
+              <div class="flex justify-between text-sm"><span class="text-gray-500">총 사용 횟수</span><span class="font-semibold">\${kwStats.total_uses||0}회</span></div>
+              <div class="border-t pt-3 mt-3">
+                <p class="text-xs font-medium text-gray-500 mb-2">카테고리별 소진율</p>
+                \${renderKwUsageBars(kwStats.usage_by_category || {})}
+              </div>
+            </div>
+          </div>
           <div class="card p-5">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-clock mr-2 text-primary-500"></i>다음 발행 예정</h3>
-            <div id="upcoming-list" class="space-y-3">\${renderUpcoming(data.upcoming || [])}</div>
+            <div class="space-y-3">\${renderUpcoming(data.upcoming || [])}</div>
           </div>
           <div class="card p-5">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-exclamation-triangle mr-2 text-warning-500"></i>최근 실패</h3>
-            <div id="failures-list" class="space-y-3">\${renderFailures(data.recent_failures || [])}</div>
+            <div class="space-y-3">\${renderFailures(data.recent_failures || [])}</div>
           </div>
         </div>
+
+        \${(data.recent_success && data.recent_success.length) ? \`
+        <div class="card p-5">
+          <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-check-double mr-2 text-green-500"></i>최근 성공 발행</h3>
+          <div class="space-y-2">
+            \${data.recent_success.map(s => \`
+              <div class="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-medium text-gray-800 truncate">\${s.title || s.keyword_text}</p>
+                  <p class="text-xs text-gray-400">\${s.keyword_text} · SEO \${s.seo_score||0}점 · \${s.published_at ? dayjs(s.published_at).format('MM/DD HH:mm') : ''}</p>
+                </div>
+                \${s.inblog_url ? '<a href="'+s.inblog_url+'" target="_blank" class="text-xs text-green-600 hover:text-green-700 whitespace-nowrap ml-2"><i class="fas fa-external-link-alt mr-1"></i>보기</a>' : ''}
+              </div>
+            \`).join('')}
+          </div>
+        </div>
+        \` : ''}
       \`;
       renderCharts(data);
+    }
+
+    function renderKwUsageBars(usageByCategory) {
+      const cats = { implant:'임플란트', orthodontics:'교정', general:'일반', prevention:'예방', local:'지역' };
+      const colors = { implant:'blue', orthodontics:'purple', general:'green', prevention:'yellow', local:'red' };
+      return Object.entries(cats).map(([k,name]) => {
+        const d = usageByCategory[k] || {total:0,used:0,rate:0};
+        return \`<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="text-gray-600">\${name}</span><span class="text-gray-400">\${d.used}/\${d.total} (\${d.rate}%)</span></div><div class="bg-gray-100 rounded-full h-1.5"><div class="bg-\${colors[k]}-500 h-1.5 rounded-full" style="width:\${d.rate}%"></div></div></div>\`;
+      }).join('');
     }
 
     function renderUpcoming(items) {
@@ -333,18 +385,22 @@ function getIndexHtml(): string {
     }
 
     function renderCharts(data) {
-      // Weekly chart
-      const wCtx = document.getElementById('weeklyChart');
-      if(wCtx) {
-        new Chart(wCtx, {
-          type: 'bar',
+      // Trend chart (7일 기본, 30일 전환 가능)
+      const tCtx = document.getElementById('trendChart');
+      if(tCtx) {
+        window._trendChart = new Chart(tCtx, {
+          type: 'line',
           data: {
-            labels: (data.weekly_labels || ['월','화','수','목','금','토','일']),
+            labels: data.weekly_labels || [],
             datasets: [{
               label: '발행 건수',
-              data: data.weekly_counts || [0,0,0,0,0,0,0],
-              backgroundColor: 'rgba(59,130,246,0.7)',
-              borderRadius: 6
+              data: data.weekly_counts || [],
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.1)',
+              fill: true,
+              tension: 0.4,
+              pointRadius: 4,
+              pointBackgroundColor: '#3b82f6'
             }]
           },
           options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
@@ -355,17 +411,31 @@ function getIndexHtml(): string {
       if(cCtx) {
         const catLabels = { implant: '임플란트', orthodontics: '교정/미용', general: '일반치료', prevention: '예방/관리', local: '지역/병원' };
         const catData = data.category_counts || {};
+        const hasData = Object.values(catData).some(v => v > 0);
         new Chart(cCtx, {
           type: 'doughnut',
           data: {
-            labels: Object.keys(catData).map(k => catLabels[k] || k),
+            labels: hasData ? Object.keys(catData).map(k => catLabels[k] || k) : ['아직 데이터 없음'],
             datasets: [{
-              data: Object.values(catData),
-              backgroundColor: ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444']
+              data: hasData ? Object.values(catData) : [1],
+              backgroundColor: hasData ? ['#3b82f6','#8b5cf6','#22c55e','#f59e0b','#ef4444'] : ['#e5e7eb']
             }]
           },
           options: { responsive: true, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } } }
         });
+      }
+    }
+
+    function switchChartPeriod(period) {
+      document.querySelectorAll('.chart-period-btn').forEach(b => {
+        b.className = 'chart-period-btn text-xs px-3 py-1 rounded-full ' + (b.dataset.period === period ? 'bg-primary-100 text-primary-700 font-medium' : 'bg-gray-100 text-gray-500');
+      });
+      if(window._trendChart && dashboardData) {
+        const labels = period === 'month' ? dashboardData.monthly_labels : dashboardData.weekly_labels;
+        const counts = period === 'month' ? dashboardData.monthly_counts : dashboardData.weekly_counts;
+        window._trendChart.data.labels = labels || [];
+        window._trendChart.data.datasets[0].data = counts || [];
+        window._trendChart.update();
       }
     }
 

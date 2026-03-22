@@ -121,8 +121,10 @@ cronApp.post('/', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
-      // 썸네일 (플레이스홀더)
-      const thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
+      // 썸네일 (AI 이미지 생성 — Pollinations)
+      const thumbnailPrompt = `Clean professional dental medical infographic illustration about "${kw.keyword}". Modern minimalist flat design, soft blue and white color palette, medical icons, no text overlay, no human faces, suitable for medical blog OG image thumbnail 1200x630.`
+      const encodedThumbPrompt = encodeURIComponent(thumbnailPrompt)
+      const thumbnailUrl = `https://image.pollinations.ai/prompt/${encodedThumbPrompt}?width=1200&height=630&model=flux&nologo=true&seed=${Date.now()}`
 
       // 콘텐츠 HTML에 썸네일 삽입
       let finalHtml = bestContent.content_html
