@@ -106,7 +106,7 @@ cronApp.post('/', async (c) => {
         try {
           const generated = await callClaude(
             claudeApiKey, kw.keyword, region, disclaimer,
-            classified.type, typeGuide, classified.question
+            classified.type, typeGuide, classified.question, classified.emotion
           )
           const seoScore = calculateSeoScore(generated, kw.keyword)
 
@@ -238,20 +238,25 @@ cronApp.post('/', async (c) => {
   })
 })
 
-// ===== Claude API 호출 =====
+// ===== Claude API 호출 (환자 공감형 v2) =====
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
-  contentType: string, typeGuide: string, patientQuestion: string
+  contentType: string, typeGuide: string, patientQuestion: string, emotion?: string
 ) {
-  const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer)
+  const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer, emotion)
 
   const userPrompt = `키워드: ${keyword}
-콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : '비교/선택'}
-환자 질문: ${patientQuestion}
+콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
+환자의 감정: ${emotion || '불안·걱정'}
+환자가 검색하게 된 마음: ${patientQuestion}
 ${region ? '참고 지역: ' + region : ''}
 연도: 2026년
 
-중요: 비용이나 가격 정보보다 실제 치료 과정, 방법, 회복, 주의사항 등 환자가 치료를 이해하는 데 도움이 되는 내용에 집중하세요. 비용은 필요한 경우에만 부수적으로 언급하세요.
+핵심 방향:
+- 환자의 불안과 걱정을 먼저 인정하고, 구체적 정보로 해소하세요
+- 비용이나 가격 정보보다 실제 치료 과정, 통증, 회복에 집중하세요
+- 환자가 읽고 나서 "이 정도면 괜찮겠다"라고 느낄 수 있어야 합니다
+- "치과에서 이렇게 질문해보세요" 같은 임파워먼트 문장을 포함하세요
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
