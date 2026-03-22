@@ -5,7 +5,9 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>()
 
 // GET /api/dashboard/stats - 대시보드 통계 (완전 구현)
 dashboardRoutes.get('/stats', async (c) => {
-  const today = new Date().toISOString().split('T')[0]
+  // KST(UTC+9) 기준 오늘 날짜 계산
+  const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const today = kstNow.toISOString().split('T')[0]
 
   // 오늘 발행 현황
   const todayPublished = await c.env.DB.prepare(
@@ -167,7 +169,7 @@ dashboardRoutes.get('/stats', async (c) => {
     date: today,
     generated: todayGenerated?.cnt || 0,
     published: todayPublished?.cnt || 0,
-    scheduled: scheduleRow?.posts_per_day || 3,
+    scheduled: scheduleRow?.posts_per_day || 5,
     completion_rate: (scheduleRow?.posts_per_day as number) > 0
       ? Math.round(((todayPublished?.cnt as number || 0) / (scheduleRow?.posts_per_day as number)) * 100)
       : 0
@@ -177,7 +179,7 @@ dashboardRoutes.get('/stats', async (c) => {
     // 기본 통계
     today_published: todayPublished?.cnt || 0,
     today_generated: todayGenerated?.cnt || 0,
-    today_scheduled: scheduleRow?.posts_per_day || 3,
+    today_scheduled: scheduleRow?.posts_per_day || 5,
     total_published: totalPublished?.cnt || 0,
     total_contents: totalContents?.cnt || 0,
     draft_count: draftCount?.cnt || 0,

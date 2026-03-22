@@ -163,8 +163,8 @@ function getIndexHtml(): string {
     // ===== API Helper =====
     async function api(path, options = {}) {
       try {
-        const res = await fetch('/api' + path, {
-          headers: { 'Content-Type': 'application/json', ...options.headers },
+        const res = await fetch('/api' + path + (path.includes('?') ? '&' : '?') + '_t=' + Date.now(), {
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ...options.headers },
           ...options
         });
         const data = await res.json();
@@ -240,7 +240,7 @@ function getIndexHtml(): string {
             <div class="flex items-center justify-between">
               <div>
                 <p class="text-sm text-gray-500">오늘 발행</p>
-                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.today_published || 0}<span class="text-base font-normal text-gray-400">/\${data.today_scheduled || 3}</span></p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">\${data.today_published || 0}<span class="text-base font-normal text-gray-400">/\${data.today_scheduled || 5}</span></p>
               </div>
               <div class="w-12 h-12 bg-primary-50 rounded-xl flex items-center justify-center">
                 <i class="fas fa-paper-plane text-primary-500 text-lg"></i>
@@ -887,9 +887,22 @@ function getIndexHtml(): string {
       document.getElementById('modal-container').innerHTML = '';
     }
 
+    // ===== Auto Refresh (60초마다 대시보드 갱신) =====
+    let dashboardRefreshTimer = null;
+    function startDashboardRefresh() {
+      stopDashboardRefresh();
+      dashboardRefreshTimer = setInterval(() => {
+        if (currentPage === 'dashboard') renderDashboard();
+      }, 60000);
+    }
+    function stopDashboardRefresh() {
+      if (dashboardRefreshTimer) { clearInterval(dashboardRefreshTimer); dashboardRefreshTimer = null; }
+    }
+
     // ===== Init =====
     dayjs.locale('ko');
     navigate('dashboard');
+    startDashboardRefresh();
     </script>
 </body>
 </html>`
