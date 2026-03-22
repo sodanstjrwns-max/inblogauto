@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "inblog-autopublish",
+  "compatibility_date": "2026-03-22",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "inblog-autopublish-db",
+      "database_id": "local-dev-db"
+    }
+  ]
+}

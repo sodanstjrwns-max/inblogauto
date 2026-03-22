@@ -1,0 +1,25 @@
+{
+  "name": "inblog-autopublish",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy dist",
+    "dev:sandbox": "wrangler pages dev dist --d1=inblog-autopublish-db --local --ip 0.0.0.0 --port 3000",
+    "db:migrate:local": "wrangler d1 migrations apply inblog-autopublish-db --local",
+    "db:seed": "wrangler d1 execute inblog-autopublish-db --local --file=./seed.sql",
+    "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+  },
+  "dependencies": {
+    "hono": "^4.12.8"
+  },
+  "devDependencies": {
+    "@hono/vite-cloudflare-pages": "^1.1.1",
+    "@hono/vite-build": "^1.2.0",
+    "@hono/vite-dev-server": "^0.18.2",
+    "vite": "^6.3.5",
+    "wrangler": "^4.4.0"
+  }
+}
