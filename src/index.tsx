@@ -3,11 +3,10 @@ import { cors } from 'hono/cors'
 import { keywordRoutes } from './routes/keywords'
 import { contentRoutes } from './routes/contents'
 import { publishRoutes } from './routes/publish'
+import { cronHandler } from './routes/cron'
 import { scheduleRoutes } from './routes/schedule'
 import { settingsRoutes } from './routes/settings'
 import { dashboardRoutes } from './routes/dashboard'
-import { cronHandler } from './routes/cron'
-
 export type Bindings = {
   DB: D1Database
   CLAUDE_API_KEY: string
@@ -30,7 +29,7 @@ app.route('/api/settings', settingsRoutes)
 app.route('/api/dashboard', dashboardRoutes)
 
 // Cron endpoint (Cloudflare Cron Trigger calls this)
-app.post('/api/cron/generate', cronHandler)
+app.route('/api/cron/generate', cronHandler)
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
@@ -711,8 +710,8 @@ function getIndexHtml(): string {
           <div class="card p-6">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-plug mr-2 text-primary-500"></i>인블로그 API</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API 키</label><input id="set-inblog-key" type="password" value="\${getValue('inblog_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="Bearer token"></div>
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">Site ID</label><input id="set-inblog-site" type="text" value="\${getValue('inblog_site_id')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="your-site-id"></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API 키</label><div class="flex gap-2"><input id="set-inblog-key" type="password" value="\${getValue('inblog_api_key')}" class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="Bearer token"><button onclick="verifyInblogKey()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium hover:bg-green-700 whitespace-nowrap"><i class="fas fa-check-circle mr-1"></i>검증</button></div></div>
+              <div id="inblog-verify-result" class="hidden p-3 rounded-lg text-sm"></div>
             </div>
           </div>
           <div class="card p-6">
@@ -753,10 +752,26 @@ function getIndexHtml(): string {
       \`;
     }
 
+    async function verifyInblogKey() {
+      const key = document.getElementById('set-inblog-key').value;
+      const resultDiv = document.getElementById('inblog-verify-result');
+      if(!key) { showToast('인블로그 API 키를 입력하세요', 'warning'); return; }
+      resultDiv.className = 'p-3 rounded-lg text-sm bg-gray-50 text-gray-600';
+      resultDiv.innerHTML = '<div class="spinner"></div> 검증 중...';
+      try {
+        const res = await api('/publish/verify', { method: 'POST', body: JSON.stringify({ api_key: key }) });
+        resultDiv.className = 'p-3 rounded-lg text-sm bg-green-50 text-green-700';
+        resultDiv.innerHTML = '<i class="fas fa-check-circle mr-1"></i> <strong>연결 성공!</strong> 블로그: ' + res.subdomain + '.inblog.ai | 권한: ' + res.scopes.join(', ') + (res.warning ? '<br><span class="text-yellow-600"><i class="fas fa-exclamation-triangle mr-1"></i>' + res.warning + '</span>' : '');
+        showToast('인블로그 API 키 검증 성공!', 'success');
+      } catch(e) {
+        resultDiv.className = 'p-3 rounded-lg text-sm bg-red-50 text-red-700';
+        resultDiv.innerHTML = '<i class="fas fa-times-circle mr-1"></i> ' + e.message;
+      }
+    }
+
     async function saveSettings() {
       const settings = [
         { key: 'inblog_api_key', value: document.getElementById('set-inblog-key').value },
-        { key: 'inblog_site_id', value: document.getElementById('set-inblog-site').value },
         { key: 'claude_api_key', value: document.getElementById('set-claude-key').value },
         { key: 'clinic_name', value: document.getElementById('set-clinic-name').value },
         { key: 'clinic_region', value: document.getElementById('set-clinic-region').value },

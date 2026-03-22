@@ -1,0 +1,5804 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Inblog API",
+    "version": "1.0.0",
+    "description": "Manage blog content using the Inblog API.\n\n## 🚀 Getting Started\n\n### 1. Get API Key\nGet your API key from the dashboard:\n1. Login to [Inblog Dashboard](https://inblog.com/dashboard)\n2. Navigate to Settings → API Keys\n3. Click \"Create New API Key\" button\n4. Select required permission scopes\n5. Store your API key securely\n\n### 2. First Request\n```bash\ncurl -X GET https://api.inblog.ai/api/v1/me \\\n  -H \"Authorization: Bearer YOUR_API_KEY\"\n```\n\n### 3. Content-Type\n- **Request**: `Content-Type: application/json` or `application/vnd.api+json`\n- **Response**: `Content-Type: application/vnd.api+json`\n\n## 📋 Key Features\n\n- **Post Management**: Create, update, delete, and publish posts\n- **Tags and Authors**: Manage categories and author information\n- **Blog Settings**: Modify basic settings\n- **URL Redirects**: Configure 307 (temporary) and 308 (permanent) redirects\n- **JSON:API Standard**: Consistent response format\n\n## 🔐 Authentication\n\nAll API requests require Bearer token authentication via Authorization header:\n\n```\nAuthorization: Bearer YOUR_API_KEY\n```\n## 📚 Learn More\n\n- [JSON:API Specification](https://jsonapi.org/)",
+    "contact": {
+      "name": "Inblog Support",
+      "email": "hello@inblog.ai"
+    },
+    "license": {
+      "name": "Proprietary"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://inblog.ai/api/v1",
+      "description": "Production API"
+    },
+    {
+      "url": "http://localhost:3000/api/v1",
+      "description": "Local development"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication",
+      "description": "## Authentication API\nCheck information about your currently active API key."
+    },
+    {
+      "name": "Blogs",
+      "description": "## Blogs API\n\nManage basic blog information and settings.\n\n### Key Features\n- Update blog name and description\n- Configure timezone\n- Set default language\n- Manage logo and favicon URLs"
+    },
+    {
+      "name": "Posts",
+      "description": "## Posts API\n\nCreate, update, delete, and publish blog posts.\n\n### Key Features\n- Create, read, and update posts\n- Manage post status (draft, published, scheduled)"
+    },
+    {
+      "name": "Post Tags",
+      "description": "## Post-Tag Relationships API\n\nManage relationships between posts and tags.\n\n### Key Features\n- Add tags to posts\n- Remove tags from posts\n- List tags for a post"
+    },
+    {
+      "name": "Post Authors",
+      "description": "## Post-Author Relationships API\n\nManage relationships between posts and authors. A single post can have multiple authors.\n\n### Key Features\n- Add authors to posts\n- Remove authors from posts\n- List authors for a post"
+    },
+    {
+      "name": "Tags",
+      "description": "## Tags API\n\nCreate and manage blog tags.\n\n### Key Features\n- Create, update, and delete tags"
+    },
+    {
+      "name": "Authors",
+      "description": "\n## Authors API\n\nView profile information for blog authors.\n\n### Key Features\n\n- View author profiles\n"
+    },
+    {
+      "name": "Redirects",
+      "description": "## Redirects API\n\nConfigure and manage URL redirect rules.\n\n### Key Features\n- View redirect rules within your blog\n- Configure 307 (temporary) / 308 (permanent) redirects"
+    },
+    {
+      "name": "Custom Domain",
+      "description": "## Custom Domain API\nManage custom domain configuration for your blog.\n### Key Features\n- Add a custom domain\n- Check domain DNS and verification status\n- Remove a custom domain"
+    },
+    {
+      "name": "Custom UI",
+      "description": "## Custom UI API\nManage blog banner and UI customization.\n### Key Features\n- Get current banner and UI settings\n- Update banner image, title, colors, and navigation"
+    },
+    {
+      "name": "Search Console",
+      "description": "## Search Console API\nConnect and query Google Search Console data for your blog.\n### Key Features\n- OAuth-based Search Console connection\n- Keyword performance data (clicks, impressions, CTR, position)\n- Page-level search performance"
+    },
+    {
+      "name": "Analytics",
+      "description": "## Analytics API\nAccess blog traffic analytics and performance metrics.\n### Key Features\n- Blog-wide traffic trends (daily/hourly)\n- Per-post performance metrics (visits, clicks, organic, CVR)\n- Traffic source analysis (referrers)\n- Individual post traffic and sources"
+    }
+  ],
+  "paths": {
+    "/me": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Get My API Key Information",
+        "description": "Retrieve information and permissions for the currently active API key.\n\nView connected blog and list of granted permissions.\n",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "API key information retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts": {
+      "get": {
+        "tags": [
+          "Posts"
+        ],
+        "summary": "List Posts",
+        "description": "Retrieve a list of published posts from the blog.\nYou can specify page number and size, and include tag or author information.\n",
+        "operationId": "listPosts",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PageParam"
+          },
+          {
+            "$ref": "#/components/parameters/LimitParam"
+          },
+          {
+            "$ref": "#/components/parameters/IncludeParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterSlugParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterPublishedParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterPublishedAtGteParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterPublishedAtLteParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterTagIdParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterAuthorIdParam"
+          },
+          {
+            "$ref": "#/components/parameters/FilterContentTypeParam"
+          },
+          {
+            "$ref": "#/components/parameters/SortParam"
+          },
+          {
+            "$ref": "#/components/parameters/OrderParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Posts"
+        ],
+        "summary": "Create Post",
+        "description": "Create a new blog post.\n\n**Required Fields:**\n- title: Post title\n- slug: URL slug (must be unique within the blog)\n\n**Image Processing:**\nExternal image URLs are uploaded to Inblog R2 storage by default.\nTo preserve original URLs, use the `preserve_external_images=true` query parameter.\n\n**Limitations:**\n- The id field is not allowed. Post ID is generated automatically by the server.\n- To update an existing post, use PATCH /posts/{id}.\n\n**Response Codes:**\n- 201: Post created successfully\n- 400: Bad request (e.g., id field included)\n- 409: Slug already exists\n\nExternal image URLs will be automatically saved to Inblog storage.\n",
+        "operationId": "createPost",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "preserve_external_images",
+            "in": "query",
+            "required": false,
+            "description": "Preserve external image URLs instead of uploading to R2 storage",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostCreateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Post created successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}": {
+      "get": {
+        "tags": [
+          "Posts"
+        ],
+        "summary": "Get Post",
+        "description": "Retrieve detailed information for a specific post by ID.",
+        "operationId": "getPost",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer",
+              "example": 123
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IncludeParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Posts"
+        ],
+        "summary": "Update Post",
+        "description": "Update the content and settings of an existing post.\n\n**Image Processing:**\nExternal image URLs are uploaded to Inblog R2 storage by default.\nTo preserve original URLs, use the `preserve_external_images=true` query parameter.\n",
+        "operationId": "updatePost",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "preserve_external_images",
+            "in": "query",
+            "required": false,
+            "description": "Preserve external image URLs instead of uploading to R2 storage",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostUpdateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Post updated successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}/publish": {
+      "patch": {
+        "tags": [
+          "Posts"
+        ],
+        "summary": "Publish Post",
+        "description": "Publish a post immediately or schedule it for later.\n\n**Supported Actions**:\n- `publish` - Publish immediately\n- `unpublish` - Unpublish\n- `schedule` - Schedule publication (future time only)\n",
+        "operationId": "publishPost",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishActionRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Publish status changed successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}/tags": {
+      "get": {
+        "tags": [
+          "Post Tags"
+        ],
+        "summary": "List Post Tags",
+        "description": "Retrieve the list of tags associated with a post.",
+        "operationId": "getPostTags",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Post Tags"
+        ],
+        "summary": "Add Tags to Post",
+        "description": "Add one or more tags to a post.\nAlready connected tags are automatically skipped.\n",
+        "operationId": "addPostTags",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/ResourceIdentifier"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/ResourceIdentifier"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tags added successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Post Tags"
+        ],
+        "summary": "Replace Post Tags",
+        "description": "Replace all tags on a post with a new set of tags.\nAll existing tags are removed and only the newly specified tags remain.\n",
+        "operationId": "replacePostTags",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "Remove all tags"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "Remove all tags"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tags replaced successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}/tags/{tagId}": {
+      "delete": {
+        "tags": [
+          "Post Tags"
+        ],
+        "summary": "Remove Tag from Post",
+        "description": "Remove a specific tag from a post.",
+        "operationId": "removePostTag",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "tagId",
+            "in": "path",
+            "required": true,
+            "description": "Tag ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Tag removed successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}/authors": {
+      "get": {
+        "tags": [
+          "Post Authors"
+        ],
+        "summary": "List Post Authors",
+        "description": "Retrieve the list of authors associated with a post.",
+        "operationId": "getPostAuthors",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Author list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Post Authors"
+        ],
+        "summary": "Add Authors to Post",
+        "description": "Add one or more authors to a post.\nAlready connected authors are automatically skipped.\n",
+        "operationId": "addPostAuthors",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/ResourceIdentifier"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/ResourceIdentifier"
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authors added successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Post Authors"
+        ],
+        "summary": "Replace Post Authors",
+        "description": "Replace all authors on a post with a new set of authors.\nAll existing authors are removed and only the newly specified authors remain.\n",
+        "operationId": "replacePostAuthors",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "Remove all authors"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/JsonApiVersion"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "data": {
+                        "oneOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          },
+                          {
+                            "type": "null",
+                            "description": "Remove all authors"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "data"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authors replaced successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/posts/{id}/authors/{authorId}": {
+      "delete": {
+        "tags": [
+          "Post Authors"
+        ],
+        "summary": "Remove Author from Post",
+        "description": "Remove a specific author from a post.",
+        "operationId": "removePostAuthor",
+        "security": [
+          {
+            "bearerAuth": [
+              "posts:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "authorId",
+            "in": "path",
+            "required": true,
+            "description": "Author ID (UUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Author removed successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/tags": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "summary": "List Tags",
+        "description": "Retrieve all tags registered in the blog.",
+        "operationId": "listTags",
+        "security": [
+          {
+            "bearerAuth": [
+              "tags:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Tags"
+        ],
+        "summary": "Create Tag",
+        "description": "Create a new tag.\n\n**Required Fields:**\n- name: Tag name\n- slug: URL slug (must be unique within the blog)\n\n**Response Codes:**\n- 201: Tag created successfully\n- 409: Slug already exists\n",
+        "operationId": "createTag",
+        "security": [
+          {
+            "bearerAuth": [
+              "tags:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tag created successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/tags/{id}": {
+      "get": {
+        "tags": [
+          "Tags"
+        ],
+        "summary": "Get Tag",
+        "description": "Retrieve detailed information for a specific tag by ID.",
+        "operationId": "getTag",
+        "security": [
+          {
+            "bearerAuth": [
+              "tags:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tag ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Tags"
+        ],
+        "summary": "Update Tag",
+        "description": "Update a tag's name or other information.",
+        "operationId": "updateTag",
+        "security": [
+          {
+            "bearerAuth": [
+              "tags:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tag ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tag updated successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/authors": {
+      "get": {
+        "tags": [
+          "Authors"
+        ],
+        "summary": "List Authors",
+        "description": "Retrieve all author profiles registered in the blog.",
+        "operationId": "listAuthors",
+        "security": [
+          {
+            "bearerAuth": [
+              "authors:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Author list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/authors/{id}": {
+      "get": {
+        "tags": [
+          "Authors"
+        ],
+        "summary": "Get Author",
+        "description": "Retrieve profile information for a specific author.",
+        "operationId": "getAuthor",
+        "security": [
+          {
+            "bearerAuth": [
+              "authors:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Author ID (UUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Author retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Authors"
+        ],
+        "summary": "Update Author",
+        "description": "Update an author's profile information.\n\n**Editable Fields:**\n- author_name: Author display name\n- avatar_url: Profile image URL\n\n**Image Processing:**\nProfile image URLs are uploaded to Inblog R2 storage by default.\nTo preserve original URLs, use the `preserve_external_images=true` query parameter.\n",
+        "operationId": "updateAuthor",
+        "security": [
+          {
+            "bearerAuth": [
+              "authors:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Author ID (UUID)",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "preserve_external_images",
+            "in": "query",
+            "required": false,
+            "description": "Preserve external image URLs instead of uploading to R2 storage",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorUpdateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthorUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Author updated successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/me": {
+      "get": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Get My Blog",
+        "description": "Retrieve information about the blog connected to the current API key.",
+        "operationId": "getMyBlog",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blog retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Update My Blog Settings",
+        "description": "Update basic settings like blog name, description, logo, favicon, and featured image.\n\n**Image Processing:**\nLogo, favicon, and featured image URLs are uploaded to Inblog R2 storage by default.\nTo preserve original URLs, use the `preserve_external_images=true` query parameter.\n",
+        "operationId": "updateMyBlog",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "preserve_external_images",
+            "in": "query",
+            "required": false,
+            "description": "Preserve external image URLs instead of uploading to R2 storage",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogUpdateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Blog updated successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/redirects": {
+      "get": {
+        "tags": [
+          "Redirects"
+        ],
+        "summary": "List Redirects",
+        "description": "Retrieve all URL redirect rules configured for the blog.",
+        "operationId": "listRedirects",
+        "security": [
+          {
+            "bearerAuth": [
+              "redirects:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Redirect list retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Redirects"
+        ],
+        "summary": "Create Redirect",
+        "description": "Create a new redirect rule.\n**Required Fields:** - from_path: Source path to redirect from - to_path: Target path to redirect to\n**Response Codes:** - 201: Redirect created successfully - 409: from_path already exists\n",
+        "operationId": "createRedirect",
+        "security": [
+          {
+            "bearerAuth": [
+              "redirects:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectCreateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Redirect created successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowedError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/redirects/{id}": {
+      "get": {
+        "tags": [
+          "Redirects"
+        ],
+        "summary": "Get Redirect",
+        "description": "Retrieve detailed information for a specific redirect rule.",
+        "operationId": "getRedirect",
+        "security": [
+          {
+            "bearerAuth": [
+              "redirects:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Redirect ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Redirect retrieved successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Redirects"
+        ],
+        "summary": "Update Redirect",
+        "description": "Update a redirect rule.",
+        "operationId": "updateRedirect",
+        "security": [
+          {
+            "bearerAuth": [
+              "redirects:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Redirect ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectUpdateRequest"
+              }
+            },
+            "application/vnd.api+json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedirectUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Redirect updated successfully",
+            "content": {
+              "application/vnd.api+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RedirectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Redirects"
+        ],
+        "summary": "Delete Redirect",
+        "description": "Permanently delete a redirect rule. ⚠️ This action cannot be undone!",
+        "operationId": "deleteRedirect",
+        "security": [
+          {
+            "bearerAuth": [
+              "redirects:write"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Redirect ID",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Redirect deleted successfully"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/domain": {
+      "post": {
+        "tags": [
+          "Custom Domain"
+        ],
+        "summary": "Add Custom Domain",
+        "description": "Add a custom domain to your blog. Returns domain configuration including Vercel DNS settings required for verification.",
+        "operationId": "addCustomDomain",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DomainAddRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Custom domain added successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainAddResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Custom Domain"
+        ],
+        "summary": "Check Domain Status",
+        "description": "Check the current custom domain configuration and DNS verification status.",
+        "operationId": "getDomainStatus",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Domain status retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Custom Domain"
+        ],
+        "summary": "Remove Custom Domain",
+        "description": "Remove the custom domain from your blog. The blog will revert to the default subdomain.",
+        "operationId": "deleteCustomDomain",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Custom domain removed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/custom-ui": {
+      "get": {
+        "tags": [
+          "Custom UI"
+        ],
+        "summary": "Get Banner & UI Settings",
+        "description": "Retrieve the current banner and UI customization settings for your blog.",
+        "operationId": "getCustomUi",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UI settings retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomUiResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Custom UI"
+        ],
+        "summary": "Update Banner & UI Settings",
+        "description": "Update banner and UI customization settings. Only provided fields will be updated.",
+        "operationId": "updateCustomUi",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomUiUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "UI settings updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomUiResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/oauth-url": {
+      "get": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Get Search Console OAuth URL",
+        "description": "Get the Google OAuth URL for connecting Search Console. Use the optional redirect_uri parameter for CLI-based authentication flows.",
+        "operationId": "getSearchConsoleOAuthUrl",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "redirect_uri",
+            "in": "query",
+            "required": false,
+            "description": "Custom redirect URI for CLI callback",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OAuth URL generated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthUrlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/connect": {
+      "post": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Connect Search Console",
+        "description": "Exchange an OAuth authorization code for tokens to complete the Search Console connection.",
+        "operationId": "connectSearchConsole",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchConsoleConnectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search Console connected successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "connected": {
+                      "type": "boolean",
+                      "example": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequestError"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/status": {
+      "get": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Check Search Console Status",
+        "description": "Check whether Google Search Console is connected to your blog.",
+        "operationId": "getSearchConsoleStatus",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connection status retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchConsoleStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/disconnect": {
+      "delete": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Disconnect Search Console",
+        "description": "Disconnect Google Search Console from your blog. Removes stored OAuth tokens.",
+        "operationId": "disconnectSearchConsole",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:write"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search Console disconnected successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "connected": {
+                      "type": "boolean",
+                      "example": false
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/keywords": {
+      "get": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Get Keyword Performance",
+        "description": "Get keyword-level search performance data from Google Search Console. Returns clicks, impressions, CTR, and average position for each keyword.",
+        "operationId": "getSearchConsoleKeywords",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 20
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "Field to sort results by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "clicks",
+                "impressions",
+                "ctr",
+                "position"
+              ],
+              "default": "clicks"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "Sort order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Keyword performance data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPerformanceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/search-console/pages": {
+      "get": {
+        "tags": [
+          "Search Console"
+        ],
+        "summary": "Get Page Performance",
+        "description": "Get page-level search performance data from Google Search Console. Returns clicks, impressions, CTR, and average position for each page.",
+        "operationId": "getSearchConsolePages",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 20
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "Field to sort results by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "clicks",
+                "impressions",
+                "ctr",
+                "position"
+              ],
+              "default": "clicks"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "Sort order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page performance data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPerformanceResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/analytics/traffic": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get Blog Traffic",
+        "description": "Get blog-wide traffic data with daily or hourly granularity. Includes visits, clicks, organic traffic, and page type breakdowns.",
+        "operationId": "getBlogTraffic",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "required": false,
+            "description": "Time interval for data aggregation",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "day",
+                "hour"
+              ],
+              "default": "day"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "description": "Filter by page type",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "home",
+                "post",
+                "category",
+                "author"
+              ],
+              "default": "all"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Traffic data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/analytics/posts": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get Post Performance Metrics",
+        "description": "Get per-post performance metrics including visits, clicks, organic traffic, and conversion rate.",
+        "operationId": "getPostMetrics",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "description": "Field to sort results by",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "visits",
+                "clicks",
+                "organic",
+                "cvr"
+              ],
+              "default": "visits"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "required": false,
+            "description": "Sort order",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "default": "desc"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 20
+            }
+          },
+          {
+            "name": "include",
+            "in": "query",
+            "required": false,
+            "description": "Set to \"title\" to include post titles in the response",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "title"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post metrics retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostMetricsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/analytics/sources": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get Traffic Sources",
+        "description": "Get traffic source analysis showing referrer data sorted by visit count.",
+        "operationId": "getTrafficSources",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Traffic sources retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferrerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/analytics/posts/{id}": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get Post Traffic",
+        "description": "Get traffic data over time for a specific post with daily or hourly granularity.",
+        "operationId": "getPostTraffic",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "required": false,
+            "description": "Time interval for data aggregation",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "day",
+                "hour"
+              ],
+              "default": "day"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post traffic data retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostTrafficResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/blogs/analytics/posts/{id}/sources": {
+      "get": {
+        "tags": [
+          "Analytics"
+        ],
+        "summary": "Get Post Traffic Sources",
+        "description": "Get traffic source analysis for a specific post showing referrer data.",
+        "operationId": "getPostTrafficSources",
+        "security": [
+          {
+            "bearerAuth": [
+              "blogs:read"
+            ]
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Post ID",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "required": false,
+            "description": "Start date (YYYY-MM-DD). Defaults to 28 days ago.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-01"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "description": "End date (YYYY-MM-DD). Defaults to today.",
+            "schema": {
+              "type": "string",
+              "format": "date",
+              "example": "2025-01-28"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum number of results to return",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Post traffic sources retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferrerResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Use API key as Bearer token.\n\nFormat: `Authorization: Bearer YOUR_API_KEY`\n\nAPI keys can be generated from the Inblog dashboard.\n"
+      }
+    },
+    "parameters": {
+      "PageParam": {
+        "name": "page",
+        "in": "query",
+        "description": "Page number (starting from 1)",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "example": 1
+        }
+      },
+      "LimitParam": {
+        "name": "limit",
+        "in": "query",
+        "description": "Items per page",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 10,
+          "example": 10
+        }
+      },
+      "IncludeParam": {
+        "name": "include",
+        "in": "query",
+        "description": "Specify related resources to include, separated by commas\n\nAvailable values for Posts:\n- `tags` - Post tags\n- `authors` - Post authors\n",
+        "schema": {
+          "type": "string",
+          "example": "tags,authors"
+        }
+      },
+      "FilterSlugParam": {
+        "name": "filter[slug]",
+        "in": "query",
+        "description": "Filter by slug. Returns only posts with an exact match.",
+        "schema": {
+          "type": "string",
+          "example": "my-post"
+        }
+      },
+      "FilterPublishedParam": {
+        "name": "filter[published]",
+        "in": "query",
+        "description": "Filter by published status.",
+        "schema": {
+          "type": "boolean",
+          "example": true
+        }
+      },
+      "FilterPublishedAtGteParam": {
+        "name": "filter[published_at_gte]",
+        "in": "query",
+        "description": "Return only posts published on or after this date. (ISO 8601 format)",
+        "schema": {
+          "type": "string",
+          "format": "date-time",
+          "example": "2024-01-01"
+        }
+      },
+      "FilterPublishedAtLteParam": {
+        "name": "filter[published_at_lte]",
+        "in": "query",
+        "description": "Return only posts published on or before this date. (ISO 8601 format)",
+        "schema": {
+          "type": "string",
+          "format": "date-time",
+          "example": "2024-12-31"
+        }
+      },
+      "FilterTagIdParam": {
+        "name": "filter[tag_id]",
+        "in": "query",
+        "description": "Return only posts with the specified tag.",
+        "schema": {
+          "type": "integer",
+          "example": 123
+        }
+      },
+      "FilterAuthorIdParam": {
+        "name": "filter[author_id]",
+        "in": "query",
+        "description": "Return only posts by the specified author.",
+        "schema": {
+          "type": "string",
+          "format": "uuid",
+          "example": "550e8400-e29b-41d4-a716-446655440000"
+        }
+      },
+      "FilterContentTypeParam": {
+        "name": "filter[content_type]",
+        "in": "query",
+        "description": "Filter by content type.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "tiptap",
+            "notion"
+          ],
+          "example": "tiptap"
+        }
+      },
+      "SortParam": {
+        "name": "sort",
+        "in": "query",
+        "description": "Sort field.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "published_at",
+            "created_at",
+            "updated_at",
+            "title"
+          ],
+          "default": "created_at",
+          "example": "published_at"
+        }
+      },
+      "OrderParam": {
+        "name": "order",
+        "in": "query",
+        "description": "Sort direction.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "desc",
+          "example": "desc"
+        }
+      }
+    },
+    "schemas": {
+      "JsonApiVersion": {
+        "type": "object",
+        "properties": {
+          "jsonapi": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "default": "1.0",
+                "example": "1.0"
+              }
+            },
+            "required": [
+              "version"
+            ]
+          }
+        },
+        "required": [
+          "jsonapi"
+        ]
+      },
+      "ResourceIdentifier": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Resource type (required)\n- posts, tags, authors etc.\n",
+            "example": "tags"
+          },
+          "id": {
+            "type": "string",
+            "description": "Resource ID (required)\n- String format\n- Must be unique within its type\n\n**Important:** The example value (123) is a sample. For actual use:\n- Get Tag IDs: `GET /v1/tags`\n- Get Author IDs: `GET /v1/authors`\n\nUsing non-existent IDs will result in a 400 error.\n",
+            "example": "123"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ]
+      },
+      "Relationship": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResourceIdentifier"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ResourceIdentifier"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Links": {
+        "type": "object",
+        "properties": {
+          "self": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL of the current resource"
+          }
+        }
+      },
+      "Meta": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "Total number of items"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Current page"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Items per page"
+          },
+          "totalPages": {
+            "type": "integer",
+            "description": "Total number of pages"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "HTTP status code"
+          },
+          "code": {
+            "type": "string",
+            "description": "Error code"
+          },
+          "title": {
+            "type": "string",
+            "description": "Error title"
+          },
+          "detail": {
+            "type": "string",
+            "description": "Detailed error message"
+          }
+        },
+        "required": [
+          "status",
+          "code",
+          "title"
+        ]
+      },
+      "ErrorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "errors": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "required": [
+              "errors"
+            ]
+          }
+        ]
+      },
+      "ApiKeyResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "api_keys"
+            ],
+            "example": "api_keys"
+          },
+          "id": {
+            "type": "string",
+            "description": "Client ID"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "subdomain": {
+                "type": "string",
+                "description": "Subdomain of connected blog",
+                "example": "myblog"
+              },
+              "blog_id": {
+                "type": "integer",
+                "description": "Blog ID",
+                "example": 123
+              },
+              "scopes": {
+                "type": "array",
+                "description": "List of permissions granted to API key",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "posts:read",
+                    "posts:write",
+                    "posts:delete",
+                    "tags:read",
+                    "tags:write",
+                    "tags:delete",
+                    "authors:read",
+                    "authors:write",
+                    "blogs:read",
+                    "blogs:write",
+                    "redirects:read",
+                    "redirects:write"
+                  ]
+                },
+                "example": [
+                  "posts:read",
+                  "posts:write",
+                  "tags:read"
+                ]
+              }
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
+      },
+      "ApiKeyResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ApiKeyResource"
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "PostResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Resource type identifier\n- Fixed value according to JSON:API standard\n- Always \"posts\"\n",
+            "enum": [
+              "posts"
+            ],
+            "example": "posts"
+          },
+          "id": {
+            "type": "string",
+            "description": "Post ID",
+            "example": "123"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "description": "Post title (recommended under 60 characters for SEO)",
+                "maxLength": 200,
+                "example": "Building a Blog with Next.js"
+              },
+              "slug": {
+                "type": "string",
+                "description": "URL-friendly unique identifier. Only letters, numbers, and hyphens allowed",
+                "pattern": "^[a-z0-9-]+$",
+                "example": "nextjs-blog-tutorial"
+              },
+              "description": {
+                "type": "string",
+                "description": "Post summary description (SEO meta description)",
+                "maxLength": 160,
+                "example": "Learn how to build a blog using Next.js and TypeScript."
+              },
+              "content_html": {
+                "type": "string",
+                "description": "\"Post content HTML (generated with TipTap editor)\n\n**Generation Method:**\n\n- Inblog uses a TipTap-based WYSIWYG editor to generate HTML\n\n- Real-time HTML conversion using editor.getHTML() method\n\n- All content is managed in structured block units\n\n**Basic HTML Tags:**\n\n- Paragraph: `<p>`\n\n- Headings: `<h2>`, `<h3>`, `<h4>` (h1, h5, h6 not supported)\n\n- Lists: `<ul>`, `<ol>`, `<li>` (nesting supported)\n\n- Text styles: `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`\n\n- Links: `<a>` (no rel attribute, nofollow removed)\n\n- Quote: `<blockquote>`\n\n- Horizontal rule: `<hr>`\n\n- Line break: `<br>`\n\n**Advanced Formatting:**\n\n- Highlight: `<mark>` (multiple colors supported)\n- Text color: `<span style=\"color: #hex;\">` - Text alignment: `style=\"text-align: left|center|right;\"`\n- Code block: `<pre><code class=\"language-*\">` (syntax highlighting supported)\n\n**Tables:**\n\n- `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`\n- Resizable columns (colwidth attribute)\n- Automatic horizontal scroll wrapping\n\n**Custom Blocks (distinguished by data-type attribute):**\n\n- Image: `<img data-type=\"imageBlock\">` - Single image block\n- Image grid: `<div data-type=\"imageGrid\">` - Grid layout\n- Image carousel: `<div data-type=\"imageCarousel\">` - Slide format\n- Callout: `<div data-type=\"callOut\">` - Emphasis box\n- Link button: `<div data-type=\"linkButton\">` - CTA button\n- Bookmark: `<div data-type=\"bookmark\">` - URL preview\n\n**Embed Support:**\n\n- YouTube: `<div data-type=\"youtube\" data-youtube-video-id=\"*\">`\n- Form services:\n  - Google Forms: `<div data-type=\"googleForm\">`\n  - HubSpot: `<div data-type=\"hubspot\">`\n  - Tally: `<div data-type=\"tally\">`\n  - Typeform: `<div data-type=\"typeform\">`\n- HTML code block: `<div data-type=\"htmlCodeBlock\">` - Custom HTML insertion\n\n**Security and Limitations:**\n\n- `<script>` tags are automatically removed (XSS prevention)\n- Images should use Inblog CDN (source.inblog.dev)\n- External stylesheet links are restricted\n- iframes are only allowed for permitted embed services\n\n**Example:**\n\n```html\n<h2>Title</h2>\n<p>Regular text with <strong>emphasis</strong>, <em>italic</em></p>\n<div data-type=\"imageBlock\" data-width=\"wide\">\n  <img src=\"https://source.inblog.dev/...\" alt=\"Description\">\n</div>\n<div data-type=\"callOut\" data-emoji=\"💡\">\n  <p>Important information</p>\n</div>\n<pre><code class=\"language-javascript\">console.log('Hello');</code></pre>\n```\\n\"\n",
+                "example": "<h2>Getting Started</h2><p>Let's build a blog with Next.js.</p><div data-type=\"imageBlock\"><img src=\"https://source.inblog.dev/image.jpg\" alt=\"Next.js Logo\"></div>"
+              },
+              "published_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Post publication time (ISO 8601 format)",
+                "example": "2024-01-15T09:30:00Z"
+              },
+              "image": {
+                "type": "object",
+                "description": "Featured image information",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "Image URL (uploaded to Inblog storage)",
+                    "example": "https://source.inblog.dev/featured_image/2025-11-27T07:55:29.824Z-3e1e9fda-41ae-4dfb-a76b-28edfa3a6dd9"
+                  },
+                  "blurhash": {
+                    "type": "string",
+                    "description": "Blur hash (base64 encoded placeholder image)",
+                    "example": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAFCAIAAADzBuo/..."
+                  },
+                  "created_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Image upload time",
+                    "example": "2025-11-27T07:55:30.897Z"
+                  }
+                }
+              },
+              "canonical_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Canonical URL (for duplicate content prevention)",
+                "example": "https://myblog.com/posts/nextjs-tutorial"
+              },
+              "meta_title": {
+                "type": "string",
+                "description": "SEO meta title (displayed in browser tab)",
+                "maxLength": 60,
+                "example": "Next.js Blog Tutorial | My Blog"
+              },
+              "meta_description": {
+                "type": "string",
+                "description": "SEO meta description (displayed in search results)",
+                "maxLength": 160,
+                "example": "A complete guide to building a blog with Next.js and TypeScript. Learn through step-by-step tutorials and real examples."
+              },
+              "cta_text": {
+                "type": "string",
+                "description": "CTA button text",
+                "example": "Learn More"
+              },
+              "cta_link": {
+                "type": "string",
+                "format": "uri",
+                "description": "URL to navigate to when CTA button is clicked",
+                "example": "https://example.com/signup"
+              },
+              "cta_color": {
+                "type": "string",
+                "description": "CTA button background color (hex color)\n- 6-digit hex code (#RRGGBB)\n- Default: blog theme color\n",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "example": "#7c3aed"
+              },
+              "cta_text_color": {
+                "type": "string",
+                "description": "CTA button text color (hex color)\n- 6-digit hex code (#RRGGBB)\n- Default: #ffffff (white)\n",
+                "pattern": "^#[0-9a-fA-F]{6}$",
+                "example": "#ffffff"
+              },
+              "custom_scripts": {
+                "type": "object",
+                "nullable": true,
+                "description": "Custom scripts inserted into the post",
+                "properties": {
+                  "head_start_script": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Script inserted at the start of <head> tag (script tag format)",
+                    "example": "<script>console.log(\"head start\");</script>"
+                  },
+                  "head_end_script": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Script inserted at the end of <head> tag (script tag format)",
+                    "example": "<script>console.log(\"head end\");</script>"
+                  },
+                  "body_start_script": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Script inserted at the start of <body> tag (script tag format)",
+                    "example": "<script>console.log(\"body start\");</script>"
+                  },
+                  "body_end_script": {
+                    "type": "string",
+                    "nullable": true,
+                    "description": "Script inserted at the end of <body> tag (script tag format)",
+                    "example": "<script>console.log(\"body end\");</script>"
+                  },
+                  "json_ld_script": {
+                    "oneOf": [
+                      {
+                        "type": "array"
+                      },
+                      {
+                        "type": "object"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "Structured data in JSON-LD format (SEO optimization)\n**What is JSON-LD?**\n- JavaScript Object Notation for Linked Data\n- Standard method for inserting structured data into web pages\n- Uses Schema.org vocabulary to clearly define content information\n**Key Benefits:**\n- Search engines accurately understand content\n- Enables Rich Snippets generation\n- Displays additional information in search results (ratings, prices, images, etc.)\n- Improves CTR (Click-Through Rate)\n**Supported Types:**\n- Article: Blog posts, news articles\n- BlogPosting: Dedicated for blog posts\n- HowTo: Tutorials, guides\n- Recipe: Cooking recipes\n- Product: Product information\n- FAQPage: Frequently asked questions\n- Event: Event, activity information\n**Usage:**\n- Both object and array formats are supported\n- Automatically wrapped in <script type=\"application/ld+json\"> tag\n- Use array format to combine multiple types\n",
+                    "example": {
+                      "@context": "https://schema.org",
+                      "@type": "BlogPosting",
+                      "headline": "Building a Blog with Next.js",
+                      "description": "How to build a blog using Next.js and TypeScript",
+                      "author": {
+                        "@type": "Person",
+                        "name": "John Doe",
+                        "url": "https://myblog.com/authors/john-doe"
+                      },
+                      "datePublished": "2024-01-15T09:30:00+09:00",
+                      "dateModified": "2024-01-16T15:00:00+09:00",
+                      "image": {
+                        "@type": "ImageObject",
+                        "url": "https://source.inblog.dev/featured_image.jpg",
+                        "width": 1200,
+                        "height": 630
+                      },
+                      "publisher": {
+                        "@type": "Organization",
+                        "name": "My Blog",
+                        "logo": {
+                          "@type": "ImageObject",
+                          "url": "https://myblog.com/logo.png"
+                        }
+                      },
+                      "mainEntityOfPage": {
+                        "@type": "WebPage",
+                        "@id": "https://myblog.com/posts/nextjs-tutorial"
+                      },
+                      "keywords": "Next.js, React, TypeScript, Blog",
+                      "articleSection": "Development",
+                      "wordCount": 1500
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "relationships": {
+            "type": "object",
+            "properties": {
+              "tags": {
+                "$ref": "#/components/schemas/Relationship"
+              },
+              "authors": {
+                "$ref": "#/components/schemas/Relationship"
+              }
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
+      },
+      "PostListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PostResource"
+                }
+              },
+              "included": {
+                "type": "array",
+                "description": "Included related resources",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TagResource"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthorResource"
+                    }
+                  ]
+                }
+              },
+              "meta": {
+                "$ref": "#/components/schemas/Meta"
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "PostResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PostResource"
+              },
+              "included": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TagResource"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthorResource"
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "PostCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "posts"
+                    ],
+                    "example": "posts"
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Post title (required)",
+                        "example": "Building a Blog with Next.js"
+                      },
+                      "slug": {
+                        "type": "string",
+                        "description": "URL slug (required)",
+                        "example": "building-blog-with-nextjs"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Post description"
+                      },
+                      "content_html": {
+                        "type": "string",
+                        "description": "\"Post content HTML (generated with TipTap editor)\n\n**Generation Method:**\n\n- Inblog uses a TipTap-based WYSIWYG editor to generate HTML\n\n- Real-time HTML conversion using editor.getHTML() method\n\n- All content is managed in structured block units\n\n**Basic HTML Tags:**\n\n- Paragraph: `<p>`\n\n- Headings: `<h2>`, `<h3>`, `<h4>` (h1, h5, h6 not supported)\n\n- Lists: `<ul>`, `<ol>`, `<li>` (nesting supported)\n\n- Text styles: `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`\n\n- Links: `<a>` (no rel attribute, nofollow removed)\n\n- Quote: `<blockquote>`\n\n- Horizontal rule: `<hr>`\n\n- Line break: `<br>`\n\n**Advanced Formatting:**\n\n- Highlight: `<mark>` (multiple colors supported)\n\n- Text color: `<span style=\"color: #hex;\">`\n- Text alignment: `style=\"text-align: left|center|right;\"`\n\n- Code block: `<pre><code class=\"language-*\">` (syntax highlighting supported)\n\n**Tables:**\n\n- `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`\n\n- Resizable columns (colwidth attribute)\n\n- Automatic horizontal scroll wrapping\n\n**Custom Blocks (distinguished by data-type attribute):**\n\n- Image: `<img data-type=\"imageBlock\">` - Single image block\n\n- Image grid: `<div data-type=\"imageGrid\">` - Grid layout\n\n- Image carousel: `<div data-type=\"imageCarousel\">` - Slide format\n\n- Callout: `<div data-type=\"callOut\">` - Emphasis box\n\n- Link button: `<div data-type=\"linkButton\">` - CTA button\n\n- Bookmark: `<div data-type=\"bookmark\">` - URL preview\n\n**Embed Support:**\n\n- YouTube: `<div data-type=\"youtube\" data-youtube-video-id=\"*\">`\n\n- Form services:\n\n  - Google Forms: `<div data-type=\"googleForm\">`\n\n  - HubSpot: `<div data-type=\"hubspot\">`\n\n  - Tally: `<div data-type=\"tally\">`\n\n  - Typeform: `<div data-type=\"typeform\">`\n\n- HTML code block: `<div data-type=\"htmlCodeBlock\">` - Custom HTML insertion\n\n**Security and Limitations:**\n\n- `<script>` tags are automatically removed (XSS prevention)\n\n- Images should use Inblog CDN (source.inblog.dev)\n\n- External stylesheet links are restricted\n\n- iframes are only allowed for permitted embed services\\n\"\n",
+                        "example": "<h2>Getting Started</h2><p>Let's build a blog with Next.js.</p>"
+                      },
+                      "published": {
+                        "type": "boolean",
+                        "description": "Publication status",
+                        "default": false
+                      },
+                      "image": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Image URL (external URLs are uploaded to Inblog storage by default, source.inblog.dev or image.inblog.dev URLs are used as-is)"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB, always uploaded to Inblog storage)"
+                          },
+                          {
+                            "type": "object",
+                            "description": "Image object (URL field follows the same rules as above)",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "format": "uri",
+                                "description": "Image URL"
+                              },
+                              "blurhash": {
+                                "type": "string",
+                                "description": "Blur hash (optional)"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "Creation time (optional)"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "canonical_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Canonical URL"
+                      },
+                      "meta_title": {
+                        "type": "string",
+                        "description": "SEO meta title",
+                        "maxLength": 60
+                      },
+                      "meta_description": {
+                        "type": "string",
+                        "description": "SEO meta description",
+                        "maxLength": 160
+                      },
+                      "cta_text": {
+                        "type": "string",
+                        "description": "CTA button text"
+                      },
+                      "cta_link": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "CTA button link"
+                      },
+                      "cta_color": {
+                        "type": "string",
+                        "description": "CTA button background color (hex color)\n- 6-digit hex code (#RRGGBB)\n",
+                        "pattern": "^#[0-9a-fA-F]{6}$",
+                        "example": "#7c3aed"
+                      },
+                      "cta_text_color": {
+                        "type": "string",
+                        "description": "CTA text color (hex color)\n- 6-digit hex code (#RRGGBB)\n",
+                        "pattern": "^#[0-9a-fA-F]{6}$",
+                        "example": "#ffffff"
+                      },
+                      "custom_scripts": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "Custom scripts inserted into the post",
+                        "properties": {
+                          "head_start_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the start of <head> tag (script tag format)"
+                          },
+                          "head_end_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the end of <head> tag (script tag format)"
+                          },
+                          "body_start_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the start of <body> tag (script tag format)"
+                          },
+                          "body_end_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the end of <body> tag (script tag format)"
+                          },
+                          "json_ld_script": {
+                            "oneOf": [
+                              {
+                                "type": "array",
+                                "description": "Array of JSON-LD Objects"
+                              },
+                              {
+                                "type": "object",
+                                "description": "Structured data in JSON-LD format for SEO optimization"
+                              }
+                            ],
+                            "example": {
+                              "@context": "https://schema.org",
+                              "@type": "BlogPosting",
+                              "headline": "Building a Blog with Next.js",
+                              "author": {
+                                "@type": "Person",
+                                "name": "John Doe"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "notion_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "nullable": true,
+                        "description": "Notion page URL for syncing content from Notion.\n\n**Behavior:**\n- When provided: Fetches the Notion page content and sets content_type to 'notion'\n- When set to null: Clears Notion data and resets content_type to 'tiptap' (converts to regular post)\n- When omitted: No changes to existing Notion settings\n\n**Supported URL formats:**\n- https://www.notion.so/page-name-{page_id}\n- https://notion.so/page-name-{page_id}\n- https://*.notion.site/page-name-{page_id}\n\n**Note:** The Notion page must be published to web for access.\n",
+                        "example": "https://www.notion.so/My-Page-abc123def456"
+                      }
+                    },
+                    "required": [
+                      "title",
+                      "slug"
+                    ],
+                    "description": "title and slug are required when creating, only provide fields to change when updating"
+                  },
+                  "relationships": {
+                    "type": "object",
+                    "description": "**How to link tags/authors:**\n1. Get tag list via `GET /v1/tags`\n2. Get author list via `GET /v1/authors`\n3. Use the actual ID values from the response\n\n**Note:** Using non-existent IDs or IDs not belonging to this blog will result in a 400 error.\n",
+                    "properties": {
+                      "tags": {
+                        "type": "object",
+                        "properties": {
+                          "data": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        }
+                      },
+                      "authors": {
+                        "type": "object",
+                        "properties": {
+                          "data": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/ResourceIdentifier"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "attributes"
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "PostUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "posts"
+                    ],
+                    "example": "posts"
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Post title\n- Recommended under 60 characters for SEO\n- Maximum 200 characters\n",
+                        "maxLength": 200,
+                        "example": "Building a Blog with Next.js (Updated)"
+                      },
+                      "slug": {
+                        "type": "string",
+                        "description": "URL-friendly unique identifier\n- Only lowercase letters, numbers, and hyphens allowed\n- Must be unique\n",
+                        "pattern": "^[a-z0-9-]+$",
+                        "example": "building-blog-with-nextjs-updated"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Post summary description\n- Used as SEO meta description\n- Maximum 160 characters\n",
+                        "maxLength": 160,
+                        "example": "Updated post description."
+                      },
+                      "content_html": {
+                        "type": "string",
+                        "description": "\"Post content HTML (generated with TipTap editor)\n\n**Generation Method:**\n\n- Inblog uses a TipTap-based WYSIWYG editor to generate HTML\n\n- Real-time HTML conversion using editor.getHTML() method\n\n- All content is managed in structured block units\n\n**Basic HTML Tags:**\n\n- Paragraph: `<p>`\n\n- Headings: `<h2>`, `<h3>`, `<h4>` (h1, h5, h6 not supported)\n\n- Lists: `<ul>`, `<ol>`, `<li>` (nesting supported)\n\n- Text styles: `<strong>`, `<em>`, `<u>`, `<s>`, `<code>`\n\n- Links: `<a>` (no rel attribute, nofollow removed)\n\n- Quote: `<blockquote>`\n\n- Horizontal rule: `<hr>`\n\n- Line break: `<br>`\n\n**Advanced Formatting:**\n\n- Highlight: `<mark>` (multiple colors supported)\n\n- Text color: `<span style=\\\"color: #hex;\\\">`\n- Text alignment: `style=\\\"text-align: left|center|right;\\\"`\n\n- Code block: `<pre><code class=\\\"language-*\\\">` (syntax highlighting supported)\n\n**Tables:**\n\n- `<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th>`, `<td>`\n\n- Resizable columns (colwidth attribute)\n\n- Automatic horizontal scroll wrapping\n\n**Custom Blocks (distinguished by data-type attribute):**\n\n- Image: `<img data-type=\\\"imageBlock\\\">` - Single image block\n\n- Image grid: `<div data-type=\\\"imageGrid\\\">` - Grid layout\n\n- Image carousel: `<div data-type=\\\"imageCarousel\\\">` - Slide format\n\n- Callout: `<div data-type=\\\"callOut\\\">` - Emphasis box\n\n- Link button: `<div data-type=\\\"linkButton\\\">` - CTA button\n\n- Bookmark: `<div data-type=\\\"bookmark\\\">` - URL preview\n\n**Embed Support:**\n\n- YouTube: `<div data-type=\\\"youtube\\\" data-youtube-video-id=\\\"*\\\">`\n\n- Form services:\n\n  - Google Forms: `<div data-type=\\\"googleForm\\\">`\n\n  - HubSpot: `<div data-type=\\\"hubspot\\\">`\n\n  - Tally: `<div data-type=\\\"tally\\\">`\n\n  - Typeform: `<div data-type=\\\"typeform\\\">`\n\n- HTML code block: `<div data-type=\\\"htmlCodeBlock\\\">` - Custom HTML insertion\n\n**Security and Limitations:**\n\n- `<script>` tags are automatically removed (XSS prevention)\n\n- Images should use Inblog CDN (source.inblog.dev)\n\n- External stylesheet links are restricted\n\n- iframes are only allowed for permitted embed services\n\n- Must send entire HTML again for partial updates\\n\"\n",
+                        "example": "<h2>Updated Title</h2><p>Modified content.</p>"
+                      },
+                      "published": {
+                        "type": "boolean",
+                        "description": "Publication status (immediate publish/unpublish)",
+                        "example": true
+                      },
+                      "image": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Image URL (external URLs are uploaded to Inblog storage by default, source.inblog.dev or image.inblog.dev URLs are used as-is)"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB, always uploaded to Inblog storage)"
+                          },
+                          {
+                            "type": "object",
+                            "description": "Image object (URL field follows the same rules as above)",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "format": "uri",
+                                "description": "Image URL"
+                              },
+                              "blurhash": {
+                                "type": "string",
+                                "description": "Blur hash (optional)"
+                              },
+                              "created_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "Creation time (optional)"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "canonical_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "Canonical URL (for duplicate content prevention)\n- SEO optimization\n- Specify original content URL\n",
+                        "example": "https://myblog.com/posts/nextjs-tutorial"
+                      },
+                      "meta_title": {
+                        "type": "string",
+                        "description": "SEO meta title\n- Displayed in browser tab\n- Recommended maximum 60 characters\n",
+                        "maxLength": 60
+                      },
+                      "meta_description": {
+                        "type": "string",
+                        "description": "SEO meta description\n- Displayed in search results\n- Recommended maximum 160 characters\n",
+                        "maxLength": 160
+                      },
+                      "cta_text": {
+                        "type": "string",
+                        "description": "CTA (Call-to-Action) button text",
+                        "example": "Learn More"
+                      },
+                      "cta_link": {
+                        "type": "string",
+                        "format": "uri"
+                      },
+                      "cta_color": {
+                        "type": "string",
+                        "description": "CTA button background color (hex color)\n- 6-digit hex code (#RRGGBB)\n- Default: blog theme color\n",
+                        "pattern": "^#[0-9a-fA-F]{6}$",
+                        "example": "#7c3aed"
+                      },
+                      "cta_text_color": {
+                        "type": "string",
+                        "description": "CTA button text color (hex color)\n- 6-digit hex code (#RRGGBB)\n- Default: #ffffff (white)\n",
+                        "pattern": "^#[0-9a-fA-F]{6}$",
+                        "example": "#ffffff"
+                      },
+                      "custom_scripts": {
+                        "type": "object",
+                        "nullable": true,
+                        "description": "Custom scripts inserted into the post",
+                        "properties": {
+                          "head_start_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the start of <head> tag (script tag format)"
+                          },
+                          "head_end_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the end of <head> tag (script tag format)"
+                          },
+                          "body_start_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the start of <body> tag (script tag format)"
+                          },
+                          "body_end_script": {
+                            "type": "string",
+                            "nullable": true,
+                            "description": "Script inserted at the end of <body> tag (script tag format)"
+                          },
+                          "json_ld_script": {
+                            "oneOf": [
+                              {
+                                "type": "array",
+                                "description": "Array of JSON-LD Objects"
+                              },
+                              {
+                                "type": "object",
+                                "description": "JSON-LD Object"
+                              }
+                            ],
+                            "example": {
+                              "@context": "https://schema.org",
+                              "@type": "BlogPosting",
+                              "headline": "Building a Blog with Next.js",
+                              "author": {
+                                "@type": "Person",
+                                "name": "John Doe"
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "notion_url": {
+                        "type": "string",
+                        "format": "uri",
+                        "nullable": true,
+                        "description": "Notion page URL for syncing content from Notion.\n\n**Behavior:**\n- When provided: Fetches the Notion page content and sets content_type to 'notion'\n- When set to null: Clears Notion data and resets content_type to 'tiptap' (converts to regular post)\n- When omitted: No changes to existing Notion settings\n\n**Supported URL formats:**\n- https://www.notion.so/page-name-{page_id}\n- https://notion.so/page-name-{page_id}\n- https://*.notion.site/page-name-{page_id}\n\n**Note:** The Notion page must be published to web for access.\n",
+                        "example": "https://www.notion.so/My-Page-abc123def456"
+                      }
+                    }
+                  },
+                  "relationships": {
+                    "type": "object",
+                    "description": "**How to link tags/authors:**\n1. Get tag list via `GET /v1/tags`\n2. Get author list via `GET /v1/authors`\n3. Use the actual ID values from the response\n\n**Note:** Using non-existent IDs or IDs not belonging to this blog will result in a 400 error.\n",
+                    "properties": {
+                      "tags": {
+                        "type": "object",
+                        "properties": {
+                          "data": {
+                            "oneOf": [
+                              {
+                                "type": "array",
+                                "items": {
+                                  "$ref": "#/components/schemas/ResourceIdentifier"
+                                }
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "PublishActionRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "publish_action"
+                    ],
+                    "example": "publish_action"
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "action": {
+                        "type": "string",
+                        "enum": [
+                          "publish",
+                          "unpublish",
+                          "schedule"
+                        ],
+                        "description": "Publication action type\n- `publish`: Publish immediately\n- `unpublish`: Unpublish\n- `schedule`: Schedule publication\n",
+                        "example": "publish"
+                      },
+                      "scheduled_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "Scheduled publication time (ISO 8601 format)\nRequired only when action is 'schedule'\nMust be a future time\n",
+                        "example": "2024-12-25T09:00:00Z"
+                      }
+                    },
+                    "required": [
+                      "action"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "attributes"
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "TagResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Resource type identifier\n- Fixed value according to JSON:API standard\n- Always \"tags\"\n",
+            "enum": [
+              "tags"
+            ],
+            "example": "tags"
+          },
+          "id": {
+            "type": "string",
+            "description": "Tag ID"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Tag name (case-sensitive, must be unique)",
+                "maxLength": 50,
+                "example": "JavaScript"
+              },
+              "slug": {
+                "type": "string",
+                "description": "URL-friendly unique identifier\n- Only lowercase letters, numbers, and hyphens allowed\n- Can be automatically generated from name\n",
+                "pattern": "^[a-z0-9-]+$",
+                "example": "javascript"
+              }
+            }
+          }
+        }
+      },
+      "TagListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TagResource"
+                }
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "TagResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/TagResource"
+              }
+            },
+            "required": [
+              "data"
+            ]
+          }
+        ]
+      },
+      "TagCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "tags"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Tag name (required)\n- Maximum 50 characters\n- Must be unique\n",
+                        "maxLength": 50,
+                        "example": "React"
+                      },
+                      "slug": {
+                        "type": "string",
+                        "description": "URL slug (required)\n- Only lowercase letters, numbers, and hyphens allowed\n- Must be unique\n",
+                        "pattern": "^[a-z0-9-]+$",
+                        "example": "react"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "slug"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "attributes"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "TagUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "tags"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "slug": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RedirectUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "redirects"
+                    ]
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "Redirect ID"
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "from_path": {
+                        "type": "string",
+                        "description": "Source path (optional)"
+                      },
+                      "to_path": {
+                        "type": "string",
+                        "description": "Target path (optional)"
+                      },
+                      "redirect_type": {
+                        "type": "integer",
+                        "enum": [
+                          307,
+                          308
+                        ],
+                        "description": "Redirect type (optional)"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AuthorResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Resource type identifier\n- Fixed value according to JSON:API standard\n- Always \"authors\"\n",
+            "enum": [
+              "authors"
+            ],
+            "example": "authors"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Author ID (UUID)"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "author_name": {
+                "type": "string",
+                "description": "Author display name\n- Name displayed on the blog\n- Can use nickname or pen name\n",
+                "maxLength": 100,
+                "example": "John"
+              },
+              "avatar_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Profile image URL\n- Recommended to upload to Inblog storage\n- Ratio: 1:1 (square)\n- Recommended size: 400x400px\n",
+                "example": "https://source.inblog.dev/avatar/user-123.jpg"
+              }
+            }
+          }
+        }
+      },
+      "AuthorListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/AuthorResource"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "AuthorResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/AuthorResource"
+              }
+            }
+          }
+        ]
+      },
+      "AuthorCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "authors"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "full_name": {
+                        "type": "string",
+                        "description": "Author full name (required)"
+                      },
+                      "author_name": {
+                        "type": "string",
+                        "description": "Author display name (optional)"
+                      },
+                      "avatar_url": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Profile image URL (external URLs are uploaded to Inblog storage by default)"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB, always uploaded to Inblog storage)"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "full_name"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "attributes"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AuthorUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "authors"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "author_name": {
+                        "type": "string",
+                        "description": "Author display name",
+                        "maxLength": 100
+                      },
+                      "avatar_url": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Profile image URL (external URLs are uploaded to Inblog storage by default)"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB, always uploaded to Inblog storage)"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "BlogResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "리소스 타입 식별자\n- JSON:API 표준에 따른 고정값\n- 항상 \"blogs\"\n",
+            "enum": [
+              "blogs"
+            ],
+            "example": "blogs"
+          },
+          "id": {
+            "type": "string",
+            "description": "Blog subdomain",
+            "example": "myblog"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "description": "Blog ID",
+                "example": 123
+              },
+              "title": {
+                "type": "string",
+                "description": "Blog title",
+                "example": "My Tech Blog"
+              },
+              "subdomain": {
+                "type": "string",
+                "description": "Subdomain",
+                "example": "myblog"
+              },
+              "description": {
+                "type": "string",
+                "description": "Blog description",
+                "example": "Stories about web development and programming"
+              },
+              "custom_domain": {
+                "type": "string",
+                "description": "Custom domain",
+                "example": "www.myblog.com"
+              },
+              "custom_domain_verified": {
+                "type": "boolean",
+                "description": "Custom domain verification status",
+                "example": true
+              },
+              "custom_subdirectory": {
+                "type": "string",
+                "description": "Custom subdirectory",
+                "example": "/blog"
+              },
+              "logo": {
+                "type": "string",
+                "format": "uri",
+                "description": "Logo image URL\n- Recommended size: 200x50px (landscape)\n- Transparent background PNG recommended\n",
+                "example": "https://source.inblog.dev/blog-logo.png"
+              },
+              "logo_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Logo URL (deprecated, use logo instead)"
+              },
+              "favicon": {
+                "type": "string",
+                "format": "uri",
+                "description": "Favicon URL\n- Size: 32x32px or 64x64px\n- ICO or PNG format\n",
+                "example": "https://source.inblog.dev/favicon.ico"
+              },
+              "og_image": {
+                "type": "string",
+                "format": "uri",
+                "description": "Open Graph featured image URL\n- Image displayed when sharing on social media\n- Recommended size: 1200x630px\n",
+                "example": "https://source.inblog.dev/og-image.jpg"
+              },
+              "blog_language": {
+                "type": "string",
+                "description": "Blog language code (ISO 639-1)\n- Default: ko (Korean)\n- Used in HTML lang attribute\n",
+                "pattern": "^[a-z]{2}$",
+                "example": "ko"
+              },
+              "timezone_diff": {
+                "type": "integer",
+                "description": "Time difference from UTC (in hours)\n- Korea: 9 (UTC+9)\n- Japan: 9 (UTC+9)\n- US Eastern: -5 (UTC-5)\n",
+                "example": 9
+              },
+              "plan": {
+                "type": "string",
+                "description": "Subscription plan (read-only)\n- free: Free plan\n- team: Team plan\n- enterprise: Enterprise plan\n",
+                "enum": [
+                  "free",
+                  "team",
+                  "enterprise"
+                ],
+                "example": "team"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Blog creation time (ISO 8601)",
+                "example": "2024-01-01T00:00:00Z"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Blog last update time (ISO 8601)",
+                "example": "2024-11-28T06:00:00Z"
+              }
+            }
+          },
+          "links": {
+            "$ref": "#/components/schemas/Links"
+          }
+        }
+      },
+      "BlogResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/BlogResource"
+              }
+            }
+          }
+        ]
+      },
+      "BlogUpdateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "blogs"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "title": {
+                        "type": "string",
+                        "description": "Blog title"
+                      },
+                      "description": {
+                        "type": "string",
+                        "description": "Blog description"
+                      },
+                      "logo": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Logo image URL"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB)"
+                          },
+                          {
+                            "type": "object",
+                            "description": "Image object",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "format": "uri"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "favicon": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Favicon URL"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB)"
+                          },
+                          {
+                            "type": "object",
+                            "description": "Image object",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "format": "uri"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "og_image": {
+                        "oneOf": [
+                          {
+                            "type": "string",
+                            "format": "uri",
+                            "description": "Open Graph image URL"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^data:image/[^;]+;base64,",
+                            "description": "Base64 data URL (max 10MB)"
+                          },
+                          {
+                            "type": "object",
+                            "description": "Image object",
+                            "properties": {
+                              "url": {
+                                "type": "string",
+                                "format": "uri"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "blog_language": {
+                        "type": "string",
+                        "description": "Blog language code"
+                      },
+                      "timezone_diff": {
+                        "type": "integer",
+                        "description": "Time difference from UTC (in minutes)"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "RedirectResource": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Resource type identifier\n- Fixed value according to JSON:API standard\n- Always \"redirects\"\n",
+            "enum": [
+              "redirects"
+            ],
+            "example": "redirects"
+          },
+          "id": {
+            "type": "string",
+            "description": "Redirect ID"
+          },
+          "attributes": {
+            "type": "object",
+            "properties": {
+              "from_path": {
+                "type": "string",
+                "description": "Source path (redirect source)\n- Must start with /\n- Must be unique\n- Wildcards not supported\n",
+                "pattern": "^/.*$",
+                "example": "/old-post"
+              },
+              "to_path": {
+                "type": "string",
+                "description": "Target path (redirect destination)\n- Must start with /\n- External URLs also allowed (http:// or https://)\n",
+                "pattern": "^(/|https?://).*$",
+                "example": "/new-post"
+              },
+              "redirect_type": {
+                "type": "integer",
+                "enum": [
+                  307,
+                  308
+                ],
+                "description": "Redirect type\n- 307: Temporary Redirect\n- 308: Permanent Redirect\n",
+                "example": 307
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Creation time"
+              }
+            }
+          }
+        }
+      },
+      "RedirectListResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/RedirectResource"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "RedirectResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/RedirectResource"
+              }
+            }
+          }
+        ]
+      },
+      "RedirectCreateRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/JsonApiVersion"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "redirects"
+                    ]
+                  },
+                  "attributes": {
+                    "type": "object",
+                    "properties": {
+                      "from_path": {
+                        "type": "string",
+                        "description": "Source path (required)"
+                      },
+                      "to_path": {
+                        "type": "string",
+                        "description": "Target path (required)"
+                      },
+                      "redirect_type": {
+                        "type": "integer",
+                        "enum": [
+                          307,
+                          308
+                        ],
+                        "description": "Redirect type",
+                        "default": 307
+                      }
+                    },
+                    "required": [
+                      "from_path",
+                      "to_path"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "attributes"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "DomainAddRequest": {
+        "type": "object",
+        "properties": {
+          "custom_domain": {
+            "type": "string",
+            "description": "The custom domain to add",
+            "example": "blog.example.com"
+          }
+        },
+        "required": [
+          "custom_domain"
+        ]
+      },
+      "DomainAddResponse": {
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "The configured custom domain",
+            "example": "blog.example.com"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether the domain DNS has been verified",
+            "example": false
+          },
+          "vercel_configuration": {
+            "type": "object",
+            "description": "Vercel DNS configuration details for domain verification",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "DNS record type",
+                "example": "CNAME"
+              },
+              "name": {
+                "type": "string",
+                "description": "DNS record name",
+                "example": "blog"
+              },
+              "value": {
+                "type": "string",
+                "description": "DNS record value",
+                "example": "cname.vercel-dns.com"
+              }
+            }
+          }
+        }
+      },
+      "DomainStatusResponse": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Whether a custom domain is configured",
+            "example": true
+          },
+          "domain": {
+            "type": "string",
+            "description": "The configured custom domain",
+            "example": "blog.example.com"
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Whether the domain DNS has been verified",
+            "example": true
+          },
+          "dns_config": {
+            "type": "object",
+            "description": "Required DNS configuration",
+            "properties": {
+              "type": {
+                "type": "string",
+                "example": "CNAME"
+              },
+              "name": {
+                "type": "string",
+                "example": "blog"
+              },
+              "value": {
+                "type": "string",
+                "example": "cname.vercel-dns.com"
+              }
+            }
+          },
+          "verification": {
+            "type": "object",
+            "description": "Domain verification details",
+            "properties": {
+              "type": {
+                "type": "string",
+                "example": "TXT"
+              },
+              "domain": {
+                "type": "string",
+                "example": "_vercel.blog.example.com"
+              },
+              "value": {
+                "type": "string",
+                "example": "vc-domain-verify=..."
+              }
+            }
+          }
+        }
+      },
+      "CustomUiResponse": {
+        "type": "object",
+        "properties": {
+          "banner_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "URL of the banner image",
+            "example": "https://cdn.inblog.ai/banners/example.jpg"
+          },
+          "banner_style": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner display style",
+            "example": "cover"
+          },
+          "banner_title": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner title text",
+            "example": "My Blog"
+          },
+          "banner_subtext": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner subtitle text",
+            "example": "Welcome to my blog"
+          },
+          "banner_title_color": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner title text color (hex)",
+            "example": "#FFFFFF"
+          },
+          "banner_bg_color": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner background color (hex)",
+            "example": "#1A1A2E"
+          },
+          "header_nav_items": {
+            "type": "array",
+            "nullable": true,
+            "description": "Header navigation items",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "footer_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "Footer text content",
+            "example": "© 2025 My Blog"
+          }
+        }
+      },
+      "CustomUiUpdateRequest": {
+        "type": "object",
+        "description": "Provide any subset of fields to update. Only included fields will be modified.",
+        "properties": {
+          "banner_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "URL of the banner image"
+          },
+          "banner_style": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner display style"
+          },
+          "banner_title": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner title text"
+          },
+          "banner_subtext": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner subtitle text"
+          },
+          "banner_title_color": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner title text color (hex)"
+          },
+          "banner_bg_color": {
+            "type": "string",
+            "nullable": true,
+            "description": "Banner background color (hex)"
+          },
+          "header_nav_items": {
+            "type": "array",
+            "nullable": true,
+            "description": "Header navigation items",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "footer_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "Footer text content"
+          }
+        }
+      },
+      "OAuthUrlResponse": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Google OAuth consent URL",
+            "example": "https://accounts.google.com/o/oauth2/v2/auth?..."
+          },
+          "redirect_uri": {
+            "type": "string",
+            "format": "uri",
+            "description": "The redirect URI that will be used for the callback",
+            "example": "http://localhost:9876/callback"
+          }
+        }
+      },
+      "SearchConsoleConnectRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "OAuth authorization code from Google",
+            "example": "4/0AX4XfWg..."
+          },
+          "redirect_uri": {
+            "type": "string",
+            "format": "uri",
+            "description": "The redirect URI used during the OAuth flow",
+            "example": "http://localhost:9876/callback"
+          }
+        },
+        "required": [
+          "code",
+          "redirect_uri"
+        ]
+      },
+      "SearchConsoleStatusResponse": {
+        "type": "object",
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "description": "Whether Search Console is connected",
+            "example": true
+          },
+          "search_console_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "The Search Console property URL",
+            "example": "https://blog.example.com"
+          }
+        }
+      },
+      "SearchPerformanceRow": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Keyword or page URL",
+            "example": "inblog seo"
+          },
+          "clicks": {
+            "type": "integer",
+            "description": "Number of clicks",
+            "example": 150
+          },
+          "impressions": {
+            "type": "integer",
+            "description": "Number of impressions",
+            "example": 3200
+          },
+          "ctr": {
+            "type": "number",
+            "format": "float",
+            "description": "Click-through rate (0-1)",
+            "example": 0.047
+          },
+          "position": {
+            "type": "number",
+            "format": "float",
+            "description": "Average search position",
+            "example": 4.2
+          }
+        }
+      },
+      "SearchPerformanceResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchPerformanceRow"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/DateRangeMeta"
+          }
+        }
+      },
+      "TrafficRow": {
+        "type": "object",
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "Date or datetime of the data point",
+            "example": "2025-01-15"
+          },
+          "visits": {
+            "type": "integer",
+            "description": "Total visits",
+            "example": 320
+          },
+          "clicks": {
+            "type": "integer",
+            "description": "Total clicks",
+            "example": 280
+          },
+          "organic": {
+            "type": "integer",
+            "description": "Organic search visits",
+            "example": 180
+          },
+          "home": {
+            "type": "integer",
+            "description": "Home page visits",
+            "example": 50
+          },
+          "post": {
+            "type": "integer",
+            "description": "Post page visits",
+            "example": 200
+          },
+          "category": {
+            "type": "integer",
+            "description": "Category page visits",
+            "example": 40
+          },
+          "author": {
+            "type": "integer",
+            "description": "Author page visits",
+            "example": 30
+          }
+        }
+      },
+      "TrafficResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrafficRow"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/DateRangeMeta"
+          }
+        }
+      },
+      "PostMetricRow": {
+        "type": "object",
+        "properties": {
+          "post_id": {
+            "type": "integer",
+            "description": "Post ID",
+            "example": 456
+          },
+          "visits": {
+            "type": "integer",
+            "description": "Total visits",
+            "example": 120
+          },
+          "clicks": {
+            "type": "integer",
+            "description": "Total clicks",
+            "example": 95
+          },
+          "organic": {
+            "type": "integer",
+            "description": "Organic search visits",
+            "example": 60
+          },
+          "cvr": {
+            "type": "number",
+            "format": "float",
+            "description": "Conversion rate",
+            "example": 0.032
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "description": "Post title (included when include=title)",
+            "example": "Getting Started with SEO"
+          }
+        }
+      },
+      "PostMetricsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PostMetricRow"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/DateRangeMeta"
+          }
+        }
+      },
+      "ReferrerRow": {
+        "type": "object",
+        "properties": {
+          "referrer": {
+            "type": "string",
+            "description": "Referrer domain or source",
+            "example": "google.com"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of visits from this source",
+            "example": 450
+          }
+        }
+      },
+      "ReferrerResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferrerRow"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/DateRangeMeta"
+          }
+        }
+      },
+      "PostTrafficResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "description": "Date or datetime of the data point",
+                  "example": "2025-01-15"
+                },
+                "visits": {
+                  "type": "integer",
+                  "description": "Total visits",
+                  "example": 45
+                },
+                "clicks": {
+                  "type": "integer",
+                  "description": "Total clicks",
+                  "example": 38
+                },
+                "organic": {
+                  "type": "integer",
+                  "description": "Organic search visits",
+                  "example": 25
+                }
+              }
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/DateRangeMeta"
+          }
+        }
+      },
+      "DateRangeMeta": {
+        "type": "object",
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Start date of the data range",
+            "example": "2025-01-01"
+          },
+          "end_date": {
+            "type": "string",
+            "format": "date",
+            "description": "End date of the data range",
+            "example": "2025-01-28"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of results",
+            "example": 100
+          }
+        }
+      }
+    },
+    "responses": {
+      "400": {
+        "description": "Invalid JSON:API Format",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 400,
+                  "code": "validation_error",
+                  "title": "Validation Error",
+                  "detail": "Missing or invalid fields: title, slug"
+                },
+                {
+                  "status": 400,
+                  "code": "invalid_request",
+                  "title": "Invalid Request",
+                  "detail": "Invalid request format"
+                },
+                {
+                  "status": 400,
+                  "code": "missing_required_field",
+                  "title": "Missing Required Field",
+                  "detail": "Required field 'title' is missing"
+                },
+                {
+                  "status": 400,
+                  "code": "invalid_field_type",
+                  "title": "Invalid Field Type",
+                  "detail": "Field 'published' must be of type boolean"
+                },
+                {
+                  "status": 400,
+                  "code": "invalid_date",
+                  "title": "Invalid Date",
+                  "detail": "'scheduled_at' must be a valid ISO 8601 date"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "401": {
+        "description": "Unauthorized",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 401,
+                  "code": "token_expired",
+                  "title": "Token Expired",
+                  "detail": "The provided API key has expired"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "403": {
+        "description": "Forbidden",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 403,
+                  "code": "insufficient_permissions",
+                  "title": "Insufficient Permissions",
+                  "detail": "This operation requires posts:write permission"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "404": {
+        "description": "Post Not Found",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 404,
+                  "code": "not_found",
+                  "title": "Not Found",
+                  "detail": "The requested resource could not be found"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "405": {
+        "description": "Method Not Allowed",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 405,
+                  "code": "method_not_allowed",
+                  "title": "Method Not Allowed",
+                  "detail": "Method PUT is not allowed for this endpoint. Allowed methods: GET, POST"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "409": {
+        "description": "Slug Conflict",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 409,
+                  "code": "conflict",
+                  "title": "Conflict",
+                  "detail": "A post with this slug already exists"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "500": {
+        "description": "Internal Server Error",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 500,
+                  "code": "external_service_error",
+                  "title": "External Service Error",
+                  "detail": "An error occurred while communicating with an external service"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "501": {
+        "description": "Not Implemented",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": 501,
+                  "code": "not_implemented",
+                  "title": "Not Implemented",
+                  "detail": "This feature is not implemented"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "UnauthorizedError": {
+        "description": "Authentication failed",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "401",
+                  "code": "unauthorized",
+                  "title": "Unauthorized",
+                  "detail": "Missing or invalid Authorization header. Expected 'Authorization: Bearer <API_KEY>'"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ForbiddenError": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "403",
+                  "code": "insufficient_permissions",
+                  "title": "Insufficient Permissions",
+                  "detail": "This operation requires posts:write permission"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "NotFoundError": {
+        "description": "Resource not found",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "404",
+                  "code": "not_found",
+                  "title": "Not Found",
+                  "detail": "The requested resource could not be found"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "MethodNotAllowedError": {
+        "description": "Method not allowed",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "405",
+                  "code": "method_not_allowed",
+                  "title": "Method Not Allowed",
+                  "detail": "The requested method is not allowed for this endpoint"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "BadRequestError": {
+        "description": "Bad request",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "400",
+                  "code": "validation_error",
+                  "title": "Validation Error",
+                  "detail": "Missing required fields: title, slug"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "ConflictError": {
+        "description": "Resource conflict",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "409",
+                  "code": "conflict",
+                  "title": "Conflict",
+                  "detail": "A resource with this identifier already exists"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "InternalServerError": {
+        "description": "서버 내부 오류",
+        "content": {
+          "application/vnd.api+json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            },
+            "example": {
+              "jsonapi": {
+                "version": "1.0"
+              },
+              "errors": [
+                {
+                  "status": "500",
+                  "code": "internal_server_error",
+                  "title": "Internal Server Error",
+                  "detail": "An unexpected error occurred"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

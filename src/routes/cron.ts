@@ -1,14 +1,16 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../index'
 import { classifyContentType, getTypeGuide, buildSystemPrompt, calculateSeoScore } from './contents'
+import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost } from './publish'
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
 
-// POST /api/cron/generate - 자동/수동 콘텐츠 생성
+// POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
 cronApp.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({}))
   const requestedCount = (body as any).count || 0
   const isManual = (body as any).manual || false
+  const autoPublishOverride = (body as any).auto_publish // true/false 직접 지정
 
   // 스케줄 설정
   const schedule: any = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
@@ -34,10 +36,16 @@ cronApp.post('/', async (c) => {
   const disclaimerRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'medical_disclaimer'").first()
   const regionRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'clinic_region'").first()
   const minScoreRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'seo_min_score'").first()
+  const autoPublishRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'auto_publish'").first()
+  const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
 
   const disclaimer = disclaimerRow?.value as string || '본 글은 일반적인 의료 정보를 제공하기 위한 목적으로 작성되었습니다. 개인의 구강 상태에 따라 진단과 치료 방법이 달라질 수 있으므로, 정확한 진단과 치료 계획은 반드시 치과의사와 상담하시기 바랍니다.'
   const region = regionRow?.value as string || ''
   const minScore = parseInt(minScoreRow?.value as string || '80')
+  const shouldAutoPublish = autoPublishOverride !== undefined
+    ? autoPublishOverride
+    : (autoPublishRow?.value === 'true')
+  const inblogApiKey = inblogKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
 
   // 키워드 자동 선택 (카테고리 가중치 기반)
   const totalWeight = Object.values(categoryWeights).reduce((s: number, v: any) => s + (v as number), 0)
@@ -71,14 +79,24 @@ cronApp.post('/', async (c) => {
   const selectedKeywords = keywords.slice(0, count)
   const results: any[] = []
 
+  // Inblog API 정보 사전 검증 (자동 발행 시)
+  let inblogApiInfo: any = null
+  if (shouldAutoPublish && inblogApiKey) {
+    try {
+      inblogApiInfo = await verifyInblogApiKey(inblogApiKey)
+    } catch (e: any) {
+      console.error('Inblog API 키 검증 실패:', e.message)
+    }
+  }
+
   // 각 키워드별 콘텐츠 생성
   for (const kw of selectedKeywords) {
     try {
-      // 콘텐츠 유형 자동 분류 (contents.ts의 공유 함수 사용)
+      // 콘텐츠 유형 자동 분류
       const classified = classifyContentType(kw.keyword, kw.search_intent || 'info')
       const typeGuide = getTypeGuide(classified.type)
 
-      // Claude API 호출
+      // Claude API 호출 (최대 3회 시도)
       let bestContent: any = null
       let attempts = 0
       const maxAttempts = 3
@@ -103,7 +121,7 @@ cronApp.post('/', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
-      // 썸네일
+      // 썸네일 (플레이스홀더)
       const thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
 
       // 콘텐츠 HTML에 썸네일 삽입
@@ -123,19 +141,73 @@ cronApp.post('/', async (c) => {
         thumbnailUrl, '', bestContent.seo_score, bestContent.word_count, bestContent.attempts
       ).run()
 
+      const contentId = insertResult.meta.last_row_id
+
       // 키워드 사용횟수 업데이트
       await c.env.DB.prepare(
         "UPDATE keywords SET used_count = used_count + 1, last_used_at = datetime('now') WHERE id = ?"
       ).bind(kw.id).run()
 
+      // === 자동 발행 ===
+      let publishStatus = 'draft'
+      let inblogUrl = ''
+      let inblogPostId = ''
+
+      if (shouldAutoPublish && inblogApiKey && inblogApiInfo) {
+        try {
+          // 태그 동기화
+          const syncedTags = await syncTags(inblogApiKey, bestContent.tags || [])
+          const tagIds = syncedTags.map((t: any) => t.id)
+
+          // Inblog에 포스트 생성
+          const createResult = await createInblogPost(inblogApiKey, {
+            title: bestContent.title,
+            slug: bestContent.slug,
+            description: bestContent.meta_description,
+            content_html: finalHtml,
+            meta_description: bestContent.meta_description,
+            image: thumbnailUrl
+          }, tagIds)
+
+          inblogPostId = createResult.id
+
+          // 즉시 발행
+          await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+
+          inblogUrl = `https://${inblogApiInfo.subdomain}.inblog.ai/${bestContent.slug}`
+          publishStatus = 'published'
+
+          // 발행 로그 기록
+          await c.env.DB.prepare(
+            `INSERT INTO publish_logs (content_id, inblog_post_id, inblog_url, status, scheduled_at, published_at)
+             VALUES (?, ?, ?, 'published', datetime('now'), datetime('now'))`
+          ).bind(contentId, inblogPostId, inblogUrl).run()
+
+          // 콘텐츠 상태 업데이트
+          await c.env.DB.prepare(
+            `UPDATE contents SET status = 'published', updated_at = datetime('now') WHERE id = ?`
+          ).bind(contentId).run()
+
+        } catch (pubErr: any) {
+          console.error(`자동 발행 실패 (${kw.keyword}):`, pubErr.message)
+          // 발행 실패해도 콘텐츠 생성은 성공으로 기록
+          await c.env.DB.prepare(
+            `INSERT INTO publish_logs (content_id, status, error_message, scheduled_at)
+             VALUES (?, 'failed', ?, datetime('now'))`
+          ).bind(contentId, pubErr.message).run()
+        }
+      }
+
       results.push({
-        content_id: insertResult.meta.last_row_id,
+        content_id: contentId,
         keyword: kw.keyword,
         title: bestContent.title,
         seo_score: bestContent.seo_score,
         content_type: classified.type,
         content_type_label: classified.label,
-        status: 'draft',
+        status: publishStatus,
+        inblog_url: inblogUrl || null,
+        inblog_post_id: inblogPostId || null,
         thumbnail: thumbnailUrl
       })
     } catch (e: any) {
@@ -143,13 +215,17 @@ cronApp.post('/', async (c) => {
     }
   }
 
+  const successCount = results.filter(r => !r.error).length
+  const publishedCount = results.filter(r => r.status === 'published').length
+
   return c.json({
-    message: `${results.filter(r => !r.error).length}/${count}건 생성 완료`,
+    message: `${successCount}/${count}건 생성, ${publishedCount}건 자동 발행 완료`,
+    auto_publish: shouldAutoPublish,
     results
   })
 })
 
-// ===== Claude API 호출 (cron 전용 — 시스템 프롬프트는 contents.ts와 동일) =====
+// ===== Claude API 호출 =====
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
   contentType: string, typeGuide: string, patientQuestion: string
