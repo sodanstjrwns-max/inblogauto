@@ -14,8 +14,8 @@ cronApp.post('/', async (c) => {
 
   // 스케줄 설정
   const schedule: any = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
-  const count = requestedCount || schedule?.posts_per_day || 3
-  const categoryWeights = JSON.parse(schedule?.category_weights || '{"implant":30,"orthodontics":20,"general":25,"prevention":15,"local":10}')
+  const count = requestedCount || schedule?.posts_per_day || 5
+  const categoryWeights = JSON.parse(schedule?.category_weights || '{"implant":30,"orthodontics":25,"general":25,"prevention":15,"local":5}')
 
   // 자동 발행 설정 확인
   if (!isManual) {
@@ -239,6 +239,8 @@ async function callClaude(
 환자 질문: ${patientQuestion}
 ${region ? '참고 지역: ' + region : ''}
 연도: 2026년
+
+중요: 비용이나 가격 정보보다 실제 치료 과정, 방법, 회복, 주의사항 등 환자가 치료를 이해하는 데 도움이 되는 내용에 집중하세요. 비용은 필요한 경우에만 부수적으로 언급하세요.
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 

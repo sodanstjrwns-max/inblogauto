@@ -9,23 +9,23 @@ type ContentType = 'A' | 'B' | 'C' | 'D'
 function classifyContentType(keyword: string, searchIntent: string): { type: ContentType; label: string; question: string } {
   const kw = keyword.toLowerCase()
 
-  // 유형 A — 비용/가격 정보
-  if (searchIntent === 'cost' || /비용|가격|얼마|보험|실비|의료비|할부|공제/.test(kw)) {
-    return { type: 'A', label: '비용/가격 정보', question: `${keyword}이(가) 얼마인지, 왜 차이가 나는지 알고 싶다` }
-  }
-
-  // 유형 D — 비교/선택
-  if (searchIntent === 'comparison' || /vs|비교|차이|종류별|추천|선택|어떤/.test(kw)) {
-    return { type: 'D', label: '비교/선택', question: `${keyword} 중 어떤 것이 나에게 맞는지 알고 싶다` }
-  }
-
-  // 유형 C — 회복/주의사항
-  if (/후|주의사항|회복|관리|음식|운동|붓기|통증|출혈|시림|부작용|증상/.test(kw)) {
+  // 유형 C — 회복/주의사항 (우선 판별)
+  if (/후|주의사항|회복|관리|음식|운동|붓기|통증|출혈|시림|부작용|증상|합병증|실패|재수술|수명|유지/.test(kw)) {
     return { type: 'C', label: '회복/주의사항', question: `${keyword} 상황에서 어떻게 해야 하는지, 정상인지 불안하다` }
   }
 
-  // 유형 B — 시술 과정/방법 (기본)
-  return { type: 'B', label: '시술 과정/방법', question: `${keyword}이(가) 무엇인지, 어떻게 진행되는지 모른다` }
+  // 유형 D — 비교/선택
+  if (searchIntent === 'comparison' || /vs|비교|차이|종류별|추천|선택|어떤|좋은/.test(kw)) {
+    return { type: 'D', label: '비교/선택', question: `${keyword} 중 어떤 것이 나에게 맞는지 알고 싶다` }
+  }
+
+  // 유형 A — 비용/가격 정보 (엄격하게 비용 키워드만)
+  if (searchIntent === 'cost' || /비용|가격|얼마|보험적용|실비/.test(kw)) {
+    return { type: 'A', label: '비용/가격 정보', question: `${keyword}이(가) 얼마인지, 왜 차이가 나는지 알고 싶다` }
+  }
+
+  // 유형 B — 시술 과정/방법 (기본 — 실제 치료 중심)
+  return { type: 'B', label: '시술 과정/방법', question: `${keyword}이(가) 무엇인지, 어떻게 진행되는지, 실제 치료 과정이 궁금하다` }
 }
 
 // ===== 유형별 구조 가이드 =====
