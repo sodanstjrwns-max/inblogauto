@@ -10,5 +10,10 @@
       "database_name": "inblog-autopublish-db",
       "database_id": "local-dev-db"
     }
-  ]
+  ],
+  // Cron Trigger: 매일 KST 06:50 (= UTC 21:50)
+  // 프로덕션 배포 후 Cloudflare Dashboard에서 확인 가능
+  "triggers": {
+    "crons": ["50 21 * * *"]
+  }
 }

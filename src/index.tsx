@@ -896,3 +896,26 @@ function getIndexHtml(): string {
 }
 
 export default app
+
+// ===== Cloudflare Cron Trigger Handler =====
+// wrangler.jsonc에서 [triggers] crons = ["50 21 * * *"] (UTC 21:50 = KST 06:50)
+// Cloudflare Pages Functions에서는 scheduled 이벤트를 이렇게 처리
+export const onRequest = app.fetch
+
+export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+  // Cron이 실행되면 내부적으로 /api/cron/generate POST를 호출
+  const url = 'http://localhost/api/cron/generate'
+  const request = new Request(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count: 0, manual: false, auto_publish: true })
+  })
+
+  try {
+    const response = await app.fetch(request, env, ctx)
+    const result = await response.json() as any
+    console.log(`[Cron] 자동 발행 완료: ${result.message || JSON.stringify(result)}`)
+  } catch (e: any) {
+    console.error(`[Cron] 자동 발행 실패:`, e.message)
+  }
+}
