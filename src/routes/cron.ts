@@ -126,8 +126,30 @@ cronApp.post('/', async (c) => {
       const encodedThumbPrompt = encodeURIComponent(thumbnailPrompt)
       const thumbnailUrl = `https://image.pollinations.ai/prompt/${encodedThumbPrompt}?width=1200&height=630&model=flux&nologo=true&seed=${Date.now()}`
 
-      // 콘텐츠 HTML에 썸네일 삽입
+      // 본문 중간 인포그래픽 이미지 생성 (콘텐츠 유형별 맞춤 프롬프트)
+      const infoImagePrompt = buildInfographicPrompt(kw.keyword, classified.type, bestContent.title)
+      const encodedInfoPrompt = encodeURIComponent(infoImagePrompt)
+      const infoImageUrl = `https://image.pollinations.ai/prompt/${encodedInfoPrompt}?width=1200&height=800&model=flux&nologo=true&seed=${Date.now() + 1}`
+
+      // 콘텐츠 HTML에 썸네일(상단) + 인포그래픽(본문 중간) 삽입
       let finalHtml = bestContent.content_html
+
+      // 1) 본문 첫 번째 H2 섹션 뒤에 인포그래픽 삽입
+      const h2Sections = finalHtml.match(/<\/h2>[\s\S]*?(?=<h2|<h2|$)/gi)
+      if (h2Sections && h2Sections.length >= 2) {
+        // 첫 번째 </h2>...내용 뒤에 인포그래픽 삽입
+        const firstH2End = finalHtml.indexOf('</h2>')
+        if (firstH2End !== -1) {
+          // 첫 번째 H2 섹션의 끝 (두 번째 <h2> 앞) 찾기
+          const afterFirstH2 = finalHtml.indexOf('<h2', firstH2End + 5)
+          if (afterFirstH2 !== -1) {
+            const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${kw.keyword} 인포그래픽" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">▲ ${kw.keyword} 관련 다이어그램</figcaption></figure>`
+            finalHtml = finalHtml.slice(0, afterFirstH2) + infographicHtml + finalHtml.slice(afterFirstH2)
+          }
+        }
+      }
+
+      // 2) 상단 썸네일 삽입
       if (thumbnailUrl) {
         finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">${kw.keyword} 관련 이미지</figcaption></figure>` + finalHtml
       }
@@ -282,4 +304,27 @@ ${region ? '참고 지역: ' + region : ''}
 }
 
 const cronHandler = cronApp
+
+// ===== 콘텐츠 유형별 인포그래픽 프롬프트 =====
+function buildInfographicPrompt(keyword: string, contentType: string, title: string): string {
+  const baseStyle = 'Professional medical infographic, clean flat design, soft blue (#4A90D9) and white color scheme, no human faces, no text overlay, high detail medical illustration, suitable for dental blog article, 1200x800'
+
+  switch (contentType) {
+    case 'B': // 시술 과정/방법
+      return `Step-by-step dental procedure diagram showing the stages of "${keyword}". Medical cross-section illustration with numbered steps, arrows showing progression, anatomical dental diagram with clean labels icons only. ${baseStyle}`
+
+    case 'C': // 회복/주의사항
+      return `Medical recovery timeline infographic for "${keyword}". Split layout showing DO vs DON'T after dental treatment, healing stages with day markers, warning icons and checkmark icons, recovery progress visualization. ${baseStyle}`
+
+    case 'D': // 비교/선택
+      return `Side-by-side comparison infographic diagram for "${keyword}". Two dental treatment options compared visually, pros and cons layout with icons, versus split design, dental material or technique comparison illustration. ${baseStyle}`
+
+    case 'A': // 비용/가격
+      return `Dental cost breakdown infographic for "${keyword}". Price range visualization with bar chart style, cost factor icons, insurance coverage diagram, clean financial medical illustration. ${baseStyle}`
+
+    default:
+      return `Detailed dental medical diagram about "${keyword}". Anatomical illustration showing dental structure and treatment, clean informational medical infographic layout. ${baseStyle}`
+  }
+}
+
 export { cronHandler }
