@@ -19,11 +19,7 @@ function classifyContentType(keyword: string, searchIntent: string): { type: Con
     return { type: 'D', label: '비교/선택', question: `${keyword} 중 어떤 것이 나에게 맞는지 알고 싶다` }
   }
 
-  // 유형 A — 비용/가격 정보 (엄격하게 비용 키워드만)
-  if (searchIntent === 'cost' || /비용|가격|얼마|보험적용|실비/.test(kw)) {
-    return { type: 'A', label: '비용/가격 정보', question: `${keyword}이(가) 얼마인지, 왜 차이가 나는지 알고 싶다` }
-  }
-
+  // 비용 키워드도 치료 중심(B타입)으로 강제 전환 — A타입 제거
   // 유형 B — 시술 과정/방법 (기본 — 실제 치료 중심)
   return { type: 'B', label: '시술 과정/방법', question: `${keyword}이(가) 무엇인지, 어떻게 진행되는지, 실제 치료 과정이 궁금하다` }
 }
