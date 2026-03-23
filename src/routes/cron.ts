@@ -7,6 +7,7 @@ const cronApp = new Hono<{ Bindings: Bindings }>()
 
 // POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
 cronApp.post('/', async (c) => {
+  try {
   const body = await c.req.json().catch(() => ({}))
   const requestedCount = (body as any).count || 0
   const isManual = (body as any).manual || false
@@ -261,6 +262,9 @@ cronApp.post('/', async (c) => {
     auto_publish: shouldAutoPublish,
     results
   })
+  } catch (outerErr: any) {
+    return c.json({ error: 'Cron 라우트 오류: ' + (outerErr?.message || String(outerErr)), stack: outerErr?.stack?.substring(0, 500) }, 500)
+  }
 })
 
 // ===== Claude API 호출 (환자 공감형 v2) =====
