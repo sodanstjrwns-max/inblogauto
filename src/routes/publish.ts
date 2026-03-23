@@ -249,11 +249,11 @@ async function createInblogPost(
     }
   }
 
-  // Featured image (thumbnail) — OG image로도 사용
-  // ★ data URI는 Inblog 1MB 제한 위반이므로 절대 전송 금지
-  if (post.image && !post.image.startsWith('data:')) {
-    requestBody.data.attributes.image = post.image
-    requestBody.data.attributes.og_image = post.image
+  // Featured image는 CREATE 시 안 먹히므로 제외 (PATCH에서 별도 처리)
+  // og_image만 문자열로 전달
+  const imageUrl = (post.image && !post.image.startsWith('data:')) ? post.image : ''
+  if (imageUrl) {
+    requestBody.data.attributes.og_image = imageUrl
   }
 
   // Author relationship
@@ -289,6 +289,41 @@ async function createInblogPost(
   const data: any = await response.json()
   const postData = data?.data || {}
   const postId = String(postData.id || '')
+  
+  // ★ 포스트 생성 후 PATCH로 커버 이미지(featured_image) 별도 설정
+  // Inblog API는 POST 시 image 필드를 무시하고, PATCH로만 설정 가능
+  if (imageUrl && postId) {
+    try {
+      const patchResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          'Authorization': `Bearer ${apiKey}`,
+          'Accept': 'application/vnd.api+json'
+        },
+        body: JSON.stringify({
+          jsonapi: { version: '1.0' },
+          data: {
+            type: 'posts',
+            id: postId,
+            attributes: {
+              image: imageUrl
+            }
+          }
+        })
+      })
+      
+      if (patchResp.ok) {
+        const patchData: any = await patchResp.json()
+        const savedImage = patchData?.data?.attributes?.image
+        console.log(`[발행] ✅ 커버 이미지 설정 성공: ${savedImage?.url || 'unknown'}`)
+      } else {
+        console.warn(`[발행] ❌ 커버 이미지 PATCH 실패 (${patchResp.status}):`, await patchResp.text())
+      }
+    } catch (imgErr: any) {
+      console.warn(`[발행] ❌ 커버 이미지 설정 에러:`, imgErr.message)
+    }
+  }
 
   // subdomain은 API 키 정보에서 가져와야 하므로 여기선 빈 값
   return {
@@ -533,6 +568,81 @@ publishRoutes.get('/tags', async (c) => {
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
   }
+})
+
+// GET /api/publish/debug-image/:postId — Inblog 포스트 이미지 필드 디버그
+publishRoutes.get('/debug-image/:postId', async (c) => {
+  const postId = c.req.param('postId')
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = apiKeyRow?.value as string || ''
+  
+  if (!inblogApiKey) return c.json({ error: 'No API key' }, 400)
+  
+  // GET 포스트 상세 
+  const getResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+    headers: {
+      'Authorization': `Bearer ${inblogApiKey}`,
+      'Accept': 'application/vnd.api+json'
+    }
+  })
+  
+  if (!getResp.ok) {
+    return c.json({ error: `GET failed: ${getResp.status}`, body: await getResp.text() })
+  }
+  
+  const data: any = await getResp.json()
+  const attrs = data?.data?.attributes || {}
+  
+  return c.json({
+    post_id: postId,
+    image: attrs.image,
+    image_type: typeof attrs.image,
+    og_image: attrs.og_image,
+    all_keys: Object.keys(attrs),
+    title: attrs.title
+  })
+})
+
+// POST /api/publish/test-image/:postId — 이미지 PATCH 테스트
+publishRoutes.post('/test-image/:postId', async (c) => {
+  const postId = c.req.param('postId')
+  const { image_url } = await c.req.json()
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = apiKeyRow?.value as string || ''
+  
+  if (!inblogApiKey) return c.json({ error: 'No API key' }, 400)
+  
+  // PATCH로 이미지 설정 시도 
+  const patchResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/vnd.api+json',
+      'Authorization': `Bearer ${inblogApiKey}`,
+      'Accept': 'application/vnd.api+json'
+    },
+    body: JSON.stringify({
+      jsonapi: { version: '1.0' },
+      data: {
+        type: 'posts',
+        id: String(postId),
+        attributes: {
+          image: image_url
+        }
+      }
+    })
+  })
+  
+  const respText = await patchResp.text()
+  let respData: any
+  try { respData = JSON.parse(respText) } catch { respData = respText }
+  
+  return c.json({
+    status: patchResp.status,
+    ok: patchResp.ok,
+    response_image: respData?.data?.attributes?.image,
+    response_keys: Object.keys(respData?.data?.attributes || {}),
+    full_response: respData
+  })
 })
 
 // Export for use in cron
