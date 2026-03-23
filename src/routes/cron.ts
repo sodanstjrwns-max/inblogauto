@@ -56,10 +56,14 @@ async function getNextContentType(db: D1Database): Promise<{ type: 'B' | 'C' | '
 
 // ===== 내부 링크용 기존 발행글 조회 =====
 async function getPublishedPosts(db: D1Database, excludeKeyword?: string): Promise<{ title: string; slug: string; keyword: string; category: string }[]> {
+  // 인블로그에 실제 존재하는 글만 참조 (publish_logs에 inblog_url이 있고 status=published인 것만)
+  // 삭제된 테스트 포스팅의 죽은 링크 방지
   const rows = await db.prepare(
-    `SELECT title, slug, keyword_text as keyword, k.category 
-     FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
-     WHERE c.status = 'published' 
+    `SELECT c.title, c.slug, c.keyword_text as keyword, k.category 
+     FROM contents c 
+     LEFT JOIN keywords k ON c.keyword_id = k.id
+     INNER JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published' AND pl.inblog_url IS NOT NULL
+     WHERE c.status = 'published' AND c.is_live = 1
      ORDER BY c.created_at DESC LIMIT 30`
   ).all()
   return (rows.results || []).map((r: any) => ({
@@ -695,6 +699,27 @@ async function generateAIImage(
           const imageUrl = falData?.images?.[0]?.url
           if (imageUrl) {
             console.log(`[이미지] ✅ ${model.name} 성공: ${keyword} (${purpose}) ${model.cost}`)
+            
+            // fal.ai URL은 임시 → R2에 영구 저장하여 엑스박스 방지
+            if (contentId && env?.R2) {
+              try {
+                const imgResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) })
+                if (imgResponse.ok) {
+                  const imgBuffer = await imgResponse.arrayBuffer()
+                  const key = `images/${contentId}/${purpose}.jpg`
+                  await env.R2.put(key, imgBuffer, {
+                    httpMetadata: { contentType: 'image/jpeg' },
+                    customMetadata: { keyword, model: model.name }
+                  })
+                  const permanentUrl = `https://inblogauto.pages.dev/api/image/${contentId}/${purpose}.jpg`
+                  console.log(`[이미지] R2 영구 저장 완료: ${permanentUrl}`)
+                  return { url: permanentUrl, caption }
+                }
+              } catch (r2Err: any) {
+                console.warn(`[이미지] R2 저장 실패, fal.ai URL 직접 사용: ${r2Err.message}`)
+              }
+            }
+            // R2 저장 실패 시 fal.ai URL 직접 사용 (임시)
             return { url: imageUrl, caption }
           }
         } else {
