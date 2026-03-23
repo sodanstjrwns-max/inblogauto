@@ -521,7 +521,7 @@ ${internalLinksBlock}
       'anthropic-version': '2023-06-01'
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-6',
+      model: 'claude-sonnet-4-20250514',
       max_tokens: 8000,
       messages: [{ role: 'user', content: userPrompt }],
       system: systemPrompt
@@ -701,9 +701,10 @@ async function generateAIImage(
             console.log(`[이미지] ✅ ${model.name} 성공: ${keyword} (${purpose}) ${model.cost}`)
             
             // fal.ai URL은 임시 → R2에 영구 저장하여 엑스박스 방지
+            // 빠른 저장: 10초 타임아웃, 실패해도 fal.ai URL 사용
             if (contentId && env?.R2) {
               try {
-                const imgResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(30000) })
+                const imgResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
                 if (imgResponse.ok) {
                   const imgBuffer = await imgResponse.arrayBuffer()
                   const key = `images/${contentId}/${purpose}.jpg`
@@ -719,7 +720,7 @@ async function generateAIImage(
                 console.warn(`[이미지] R2 저장 실패, fal.ai URL 직접 사용: ${r2Err.message}`)
               }
             }
-            // R2 저장 실패 시 fal.ai URL 직접 사용 (임시)
+            // R2 저장 실패 시 fal.ai URL 직접 사용 (보통 24~48시간 유효)
             return { url: imageUrl, caption }
           }
         } else {
