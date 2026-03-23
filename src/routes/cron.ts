@@ -633,7 +633,7 @@ async function generateAIImage(
   const prompt = buildImagePrompt(keyword, category, purpose, contentType)
   const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
   
-  // ===== 방법 1: fal.ai FLUX (유료, 고품질, 안정적) =====
+  // ===== 방법 1: fal.ai FLUX 프리미엄 체인 (FLUX.2 pro → FLUX.1 pro → schnell) =====
   // 설정에서 fal.ai API 키 읽기
   let falApiKey = ''
   try {
@@ -642,65 +642,78 @@ async function generateAIImage(
   } catch (e) {}
   
   if (falApiKey) {
-    try {
-      // fal.ai FLUX.1 schnell (빠르고 저렴: ~$0.003/장)
-      const falResponse = await fetch('https://fal.run/fal-ai/flux/schnell', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Key ${falApiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
+    // fal.ai 모델 우선순위 체인 (최고급 → 고급 → 기본)
+    const falModels = [
+      {
+        name: 'FLUX.2 pro',
+        url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra',
+        body: {
           prompt: prompt,
           image_size: { width: 1200, height: 630 },
           num_images: 1,
-          enable_safety_checker: false
-        })
-      })
-      
-      if (falResponse.ok) {
-        const falData: any = await falResponse.json()
-        const imageUrl = falData?.images?.[0]?.url
-        if (imageUrl) {
-          console.log(`[이미지] fal.ai FLUX schnell 성공: ${keyword} (${purpose})`)
-          return { url: imageUrl, caption }
-        }
-      } else {
-        const errText = await falResponse.text()
-        console.warn(`[이미지] fal.ai FLUX schnell 실패 (${falResponse.status}): ${errText.substring(0, 200)}`)
-        
-        // schnell 실패 시 fal.ai FLUX dev 시도 (더 고품질)
-        try {
-          const falDevResponse = await fetch('https://fal.run/fal-ai/flux/dev', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Key ${falApiKey}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              prompt: prompt,
-              image_size: { width: 1200, height: 630 },
-              num_images: 1,
-              num_inference_steps: 28,
-              enable_safety_checker: false
-            })
-          })
-          
-          if (falDevResponse.ok) {
-            const falDevData: any = await falDevResponse.json()
-            const devImageUrl = falDevData?.images?.[0]?.url
-            if (devImageUrl) {
-              console.log(`[이미지] fal.ai FLUX dev 성공: ${keyword} (${purpose})`)
-              return { url: devImageUrl, caption }
-            }
-          }
-        } catch (falDevErr: any) {
-          console.warn(`[이미지] fal.ai FLUX dev 실패: ${falDevErr.message}`)
-        }
+          safety_tolerance: '5',
+          output_format: 'jpeg',
+        },
+        cost: '~₩100/장'
+      },
+      {
+        name: 'FLUX.1 pro',
+        url: 'https://fal.run/fal-ai/flux-pro',
+        body: {
+          prompt: prompt,
+          image_size: { width: 1200, height: 630 },
+          num_images: 1,
+          safety_tolerance: '5',
+          output_format: 'jpeg',
+        },
+        cost: '~₩70/장'
+      },
+      {
+        name: 'FLUX.1 schnell',
+        url: 'https://fal.run/fal-ai/flux/schnell',
+        body: {
+          prompt: prompt,
+          image_size: { width: 1200, height: 630 },
+          num_images: 1,
+          enable_safety_checker: false,
+        },
+        cost: '~₩4/장'
       }
-    } catch (falErr: any) {
-      console.warn(`[이미지] fal.ai 호출 실패: ${falErr.message}`)
+    ]
+    
+    for (const model of falModels) {
+      try {
+        console.log(`[이미지] ${model.name} 시도 중... (${model.cost})`)
+        const falResponse = await fetch(model.url, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Key ${falApiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(model.body),
+          signal: AbortSignal.timeout(60000) // 60초 타임아웃
+        })
+        
+        if (falResponse.ok) {
+          const falData: any = await falResponse.json()
+          const imageUrl = falData?.images?.[0]?.url
+          if (imageUrl) {
+            console.log(`[이미지] ✅ ${model.name} 성공: ${keyword} (${purpose}) ${model.cost}`)
+            return { url: imageUrl, caption }
+          }
+        } else {
+          const errText = await falResponse.text()
+          console.warn(`[이미지] ❌ ${model.name} 실패 (${falResponse.status}): ${errText.substring(0, 200)}`)
+          // 다음 모델로 자동 폴백
+          continue
+        }
+      } catch (falErr: any) {
+        console.warn(`[이미지] ❌ ${model.name} 에러: ${falErr.message}`)
+        // 다음 모델로 자동 폴백
+        continue
+      }
     }
+    console.warn('[이미지] fal.ai 전체 모델 실패, 다음 방법으로 폴백')
   }
   
   // ===== 방법 2: Cloudflare Workers AI (무료 할당량 내에서) =====

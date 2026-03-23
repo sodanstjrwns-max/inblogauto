@@ -670,15 +670,17 @@ function calculateSeoScore(content: any, keyword: string): number {
   return Math.min(100, Math.max(0, score))
 }
 
-// ===== 썸네일 생성 (고급 AI 이미지 생성 — fal.ai 우선) =====
+// ===== 썸네일 생성 (프리미엄 AI 이미지 — fal.ai FLUX.2 pro 우선) =====
 async function generateThumbnail(keyword: string, title: string, env?: any): Promise<{ url: string; prompt: string }> {
-  const prompt = `High quality photorealistic 3D dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, clean modern design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, no logos, professional healthcare aesthetic, studio lighting, suitable for medical blog OG image thumbnail 1200x630.`
+  const prompt = `High quality photorealistic 3D dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, clean modern design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, no logos, professional healthcare aesthetic, studio lighting, cinematic composition, 8k ultra-detailed, suitable for medical blog OG image thumbnail 1200x630.`
   
   // 폴백용 플레이스홀더
-  const placeholderUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(keyword)}&font=sans-serif`
+  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
+  const colorIdx = Math.abs(keyword.length * 7) % colors.length
+  const placeholderUrl = `https://placehold.co/1200x630/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
 
   try {
-    // 방법 1: fal.ai FLUX (유료, 안정적, 고품질)
+    // fal.ai API 키 읽기
     let falApiKey = ''
     try {
       const falKeyRow = await env?.DB?.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
@@ -686,31 +688,79 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
     } catch (e) {}
     
     if (falApiKey) {
-      const falResponse = await fetch('https://fal.run/fal-ai/flux/schnell', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Key ${falApiKey}`,
-          'Content-Type': 'application/json'
+      // fal.ai 프리미엄 모델 체인 (최고급 → 고급 → 기본)
+      const falModels = [
+        {
+          name: 'FLUX.2 pro',
+          url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra',
+          body: {
+            prompt: prompt,
+            image_size: { width: 1200, height: 630 },
+            num_images: 1,
+            safety_tolerance: '5',
+            output_format: 'jpeg',
+          },
+          cost: '~₩100/장'
         },
-        body: JSON.stringify({
-          prompt: prompt,
-          image_size: { width: 1200, height: 630 },
-          num_images: 1,
-          enable_safety_checker: false
-        })
-      })
+        {
+          name: 'FLUX.1 pro',
+          url: 'https://fal.run/fal-ai/flux-pro',
+          body: {
+            prompt: prompt,
+            image_size: { width: 1200, height: 630 },
+            num_images: 1,
+            safety_tolerance: '5',
+            output_format: 'jpeg',
+          },
+          cost: '~₩70/장'
+        },
+        {
+          name: 'FLUX.1 schnell',
+          url: 'https://fal.run/fal-ai/flux/schnell',
+          body: {
+            prompt: prompt,
+            image_size: { width: 1200, height: 630 },
+            num_images: 1,
+            enable_safety_checker: false,
+          },
+          cost: '~₩4/장'
+        }
+      ]
       
-      if (falResponse.ok) {
-        const falData: any = await falResponse.json()
-        const imageUrl = falData?.images?.[0]?.url
-        if (imageUrl) {
-          console.log(`[썸네일] fal.ai FLUX 성공: ${keyword}`)
-          return { url: imageUrl, prompt }
+      for (const model of falModels) {
+        try {
+          console.log(`[썸네일] ${model.name} 시도 중... (${model.cost})`)
+          const falResponse = await fetch(model.url, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(model.body),
+            signal: AbortSignal.timeout(60000)
+          })
+          
+          if (falResponse.ok) {
+            const falData: any = await falResponse.json()
+            const imageUrl = falData?.images?.[0]?.url
+            if (imageUrl) {
+              console.log(`[썸네일] ✅ ${model.name} 성공: ${keyword} ${model.cost}`)
+              return { url: imageUrl, prompt }
+            }
+          } else {
+            const errText = await falResponse.text()
+            console.warn(`[썸네일] ❌ ${model.name} 실패 (${falResponse.status}): ${errText.substring(0, 200)}`)
+            continue
+          }
+        } catch (falErr: any) {
+          console.warn(`[썸네일] ❌ ${model.name} 에러: ${falErr.message}`)
+          continue
         }
       }
+      console.warn('[썸네일] fal.ai 전체 모델 실패, Pollinations 폴백')
     }
     
-    // 방법 2: Pollinations AI turbo (무료 폴백)
+    // 폴백: Pollinations AI turbo (무료)
     const seed = Math.abs(Date.now() % 999999)
     const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=turbo&nologo=true&seed=${seed}`
@@ -721,7 +771,6 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
       return { url: pollinationsUrl, prompt }
     }
 
-    // Pollinations URL을 직접 반환 (GET 시 이미지 생성됨)
     return { url: pollinationsUrl, prompt }
   } catch (e) {
     console.error('썸네일 생성 실패, 플레이스홀더 사용:', e)
