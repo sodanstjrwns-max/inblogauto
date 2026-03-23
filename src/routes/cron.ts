@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { Bindings } from '../index'
 import { classifyContentType, getTypeGuide, buildSystemPrompt, calculateSeoScore } from './contents'
 import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost, getAuthorId } from './publish'
+import { injectSchemaToHtml, insertInternalLinks, sendNotification } from './enhancements'
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
 
@@ -288,7 +289,30 @@ cronApp.post('/', async (c) => {
       // 상단 썸네일
       finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
-      // DB 업데이트 (이미지 URL 포함된 최종 HTML)
+      // === 3.5단계: 내부 링크 자동 삽입 ===
+      if (existingPosts.length > 0) {
+        const postListForLinks = existingPosts.map((p, idx) => ({
+          id: idx, title: p.title, slug: p.slug, keyword: p.keyword, category: p.category
+        }))
+        const { html: linkedHtml } = insertInternalLinks(
+          finalHtml, kw.keyword, postListForLinks, kw.category || 'general', 3
+        )
+        finalHtml = linkedHtml
+      }
+
+      // === 3.6단계: FAQ Schema(JSON-LD) + Article Schema 자동 삽입 ===
+      finalHtml = injectSchemaToHtml(finalHtml, JSON.stringify(bestContent.faq), {
+        title: bestContent.title,
+        meta_description: bestContent.meta_description,
+        slug: bestContent.slug,
+        keyword_text: kw.keyword,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        word_count: bestContent.word_count,
+        thumbnail_url: thumbnailUrl
+      })
+
+      // DB 업데이트 (이미지 URL + 내부 링크 + Schema 포함 최종 HTML)
       await c.env.DB.prepare(
         `UPDATE contents SET content_html = ?, thumbnail_url = ? WHERE id = ?`
       ).bind(finalHtml, thumbnailUrl, contentId).run()
@@ -371,6 +395,35 @@ cronApp.post('/', async (c) => {
 
   const successCount = results.filter(r => !r.error).length
   const publishedCount = results.filter(r => r.status === 'published').length
+  const failedCount = results.filter(r => r.error).length
+
+  // === 알림 전송 ===
+  try {
+    if (successCount > 0) {
+      await sendNotification(c.env.DB, {
+        type: publishedCount > 0 ? 'publish_success' : 'cron_complete',
+        title: `콘텐츠 ${isManual ? '수동' : '자동'} 생성 완료`,
+        message: `${successCount}/${count}건 생성, ${publishedCount}건 발행${failedCount > 0 ? `, ${failedCount}건 실패` : ''}`,
+        details: results.map((r: any) => ({
+          keyword: r.keyword,
+          seo_score: r.seo_score,
+          status: r.status || (r.error ? 'failed' : 'draft'),
+          inblog_url: r.inblog_url
+        })),
+        url: 'https://inblogauto.pages.dev'
+      })
+    }
+    if (failedCount > 0) {
+      await sendNotification(c.env.DB, {
+        type: 'publish_failed',
+        title: `⚠️ 콘텐츠 생성 실패 알림`,
+        message: `${failedCount}건 실패: ${results.filter((r: any) => r.error).map((r: any) => r.keyword).join(', ')}`,
+        details: results.filter((r: any) => r.error)
+      })
+    }
+  } catch (notifErr: any) {
+    console.error('알림 전송 실패:', notifErr.message)
+  }
 
   return c.json({
     message: `${successCount}/${count}건 생성, ${publishedCount}건 자동 발행 완료`,

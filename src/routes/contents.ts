@@ -204,7 +204,9 @@ ${typeGuide}
 6. 비교 유형 시 <table> (보기 쉬운 비교표)
 7. FAQ: <h2>자주 묻는 질문</h2> 아래 <details><summary>Q</summary><p>A</p></details> 5~7개
 8. 마무리 <p>: 핵심 요약 + 환자 임파워먼트 (치과에서 할 질문 제안)
-9. 맨 하단 면책 문구: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>`
+9. 맨 하단 면책 문구: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>
+
+## 주의사항: content_html에 JSON-LD 스키마나 <script> 태그를 절대 포함하지 마세요. 순수 HTML 본문만 출력합니다.`
 }
 
 // GET /api/contents - 콘텐츠 목록 조회

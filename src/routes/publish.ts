@@ -234,14 +234,18 @@ async function createInblogPost(
         description: post.description || post.meta_description,
         content_html: post.content_html,
         meta_description: post.meta_description,
-        published: false // 항상 draft로 먼저 생성
+        published: false, // 항상 draft로 먼저 생성
+        // OG 태그 최적화 — SNS 공유 시 미리보기
+        og_title: post.title,
+        og_description: post.meta_description,
       }
     }
   }
 
-  // Featured image (thumbnail)
+  // Featured image (thumbnail) — OG image로도 사용
   if (post.image) {
     requestBody.data.attributes.image = post.image
+    requestBody.data.attributes.og_image = post.image
   }
 
   // Author relationship

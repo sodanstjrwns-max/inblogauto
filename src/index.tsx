@@ -8,6 +8,7 @@ import { scheduleRoutes } from './routes/schedule'
 import { settingsRoutes } from './routes/settings'
 import { dashboardRoutes } from './routes/dashboard'
 import { performanceRoutes } from './routes/performance'
+import { enhancementRoutes } from './routes/enhancements'
 export type Bindings = {
   DB: D1Database
   CLAUDE_API_KEY: string
@@ -30,6 +31,7 @@ app.route('/api/schedule', scheduleRoutes)
 app.route('/api/settings', settingsRoutes)
 app.route('/api/dashboard', dashboardRoutes)
 app.route('/api/performance', performanceRoutes)
+app.route('/api/enhancements', enhancementRoutes)
 
 // Cron endpoint (Cloudflare Cron Trigger calls this)
 app.route('/api/cron/generate', cronHandler)
@@ -175,6 +177,9 @@ function getIndexHtml(): string {
           <a href="#" onclick="navigate('performance')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="performance">
             <i class="fas fa-chart-bar w-5 text-center"></i> 성과 분석
           </a>
+          <a href="#" onclick="navigate('seo-tools')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="seo-tools">
+            <i class="fas fa-tools w-5 text-center"></i> SEO 도구
+          </a>
           <a href="#" onclick="navigate('settings')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="settings">
             <i class="fas fa-cog w-5 text-center"></i> 설정
           </a>
@@ -264,6 +269,7 @@ function getIndexHtml(): string {
         schedule: ['스케줄러', '자동 발행 스케줄을 설정합니다'],
         history: ['발행 이력', '콘텐츠 생성 및 발행 이력을 확인합니다'],
         performance: ['성과 분석', 'SEO 검색 성과를 추적하고 최적화합니다'],
+        'seo-tools': ['SEO 도구', 'Schema, 내부 링크, 사이트맵 등 SEO 개선 도구'],
         settings: ['설정', 'API 키 및 사이트 설정을 관리합니다']
       };
       document.getElementById('page-title').textContent = titles[page][0];
@@ -279,6 +285,7 @@ function getIndexHtml(): string {
           case 'schedule': await renderSchedule(); break;
           case 'history': await renderHistory(); break;
           case 'performance': await renderPerformance(); break;
+          case 'seo-tools': await renderSeoTools(); break;
           case 'settings': await renderSettings(); break;
         }
       } catch(e) {
@@ -1003,6 +1010,210 @@ function getIndexHtml(): string {
       } catch(e) { showToast('JSON 파싱 오류: ' + e.message, 'error'); }
     }
 
+    // ===== SEO Tools Page =====
+    async function renderSeoTools() {
+      const c = document.getElementById('page-content');
+      // 알림 상태 조회
+      let notifStatus = { slack_configured: false, email_configured: false, notifications_enabled: true };
+      try { notifStatus = await api('/enhancements/notification-status'); } catch {}
+      
+      c.innerHTML = \`
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div class="card p-4 stat-card cursor-pointer" onclick="runBackfillAll()">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center"><i class="fas fa-magic text-blue-600"></i></div>
+              <div>
+                <p class="text-xs text-gray-500">1-Click \ud1b5\ud569 \uc2e4\ud589</p>
+                <p class="text-sm font-semibold text-gray-900">Schema + \ub0b4\ubd80\ub9c1\ud06c + Inblog</p>
+              </div>
+            </div>
+          </div>
+          <div class="card p-4 stat-card">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 \${notifStatus.slack_configured ? 'bg-green-100' : 'bg-gray-100'} rounded-lg flex items-center justify-center">
+                <i class="fab fa-slack \${notifStatus.slack_configured ? 'text-green-600' : 'text-gray-400'}"></i>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">\uc2ac\ub799 \uc54c\ub9bc</p>
+                <p class="text-sm font-semibold \${notifStatus.slack_configured ? 'text-green-600' : 'text-gray-500'}">\${notifStatus.slack_configured ? '\uc5f0\uacb0\ub428' : '\ubbf8\uc124\uc815'}</p>
+              </div>
+            </div>
+          </div>
+          <div class="card p-4 stat-card">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 \${notifStatus.email_configured ? 'bg-green-100' : 'bg-gray-100'} rounded-lg flex items-center justify-center">
+                <i class="fas fa-envelope \${notifStatus.email_configured ? 'text-green-600' : 'text-gray-400'}"></i>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">\uc774\uba54\uc77c Webhook</p>
+                <p class="text-sm font-semibold \${notifStatus.email_configured ? 'text-green-600' : 'text-gray-500'}">\${notifStatus.email_configured ? '\uc5f0\uacb0\ub428' : '\ubbf8\uc124\uc815'}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SEO \ub3c4\uad6c \uce74\ub4dc -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-code text-purple-500 mr-2"></i>1. FAQ Schema (JSON-LD)</h3>
+            <p class="text-sm text-gray-600 mb-4">\ubaa8\ub4e0 \uac8c\uc2dc\ubb3c\uc5d0 FAQPage + MedicalWebPage \uc2a4\ud0a4\ub9c8\ub97c \uc790\ub3d9 \uc0bd\uc785\ud569\ub2c8\ub2e4. \uad6c\uae00 FAQ \ub9ac\uce58 \uc2a4\ub2c8\ud3ab \ub178\ucd9c\ub85c CTR 20-30% \uc0c1\uc2b9 \uae30\ub300.</p>
+            <div class="flex gap-2">
+              <button onclick="runBackfillSchema(false)" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700"><i class="fas fa-play mr-1"></i>\uc2e4\ud589</button>
+              <button onclick="runBackfillSchema(true)" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-300"><i class="fas fa-eye mr-1"></i>Dry Run</button>
+            </div>
+            <div id="schema-result" class="mt-3 text-sm hidden"></div>
+          </div>
+          
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-link text-blue-500 mr-2"></i>2. \ub0b4\ubd80 \ub9c1\ud06c \uc18c\uae09 \uc801\uc6a9</h3>
+            <p class="text-sm text-gray-600 mb-4">\uae30\uc874 \uac8c\uc2dc\ubb3c\uc5d0 \uad00\ub828 \uae00 \ub9c1\ud06c\ub97c \uc790\ub3d9 \uc0bd\uc785\ud558\uace0, Inblog\uc5d0\ub3c4 \ub3d9\uae30\ud654\ud569\ub2c8\ub2e4.</p>
+            <div class="flex gap-2">
+              <button onclick="runBackfillLinks(false, true)" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700"><i class="fas fa-play mr-1"></i>\uc2e4\ud589 + Inblog</button>
+              <button onclick="runBackfillLinks(false, false)" class="bg-blue-100 text-blue-700 px-4 py-2 rounded-lg text-sm hover:bg-blue-200">DB\ub9cc</button>
+              <button onclick="runBackfillLinks(true, false)" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-300"><i class="fas fa-eye mr-1"></i>Dry Run</button>
+            </div>
+            <div id="links-result" class="mt-3 text-sm hidden"></div>
+          </div>
+          
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-sitemap text-green-500 mr-2"></i>3. Sitemap.xml</h3>
+            <p class="text-sm text-gray-600 mb-4">\ubaa8\ub4e0 \ubc1c\ud589\uae00\uc758 URL\uc744 \ud3ec\ud568\ud558\ub294 \ub3d9\uc801 \uc0ac\uc774\ud2b8\ub9f5\uc744 \uc790\ub3d9 \uc0dd\uc131\ud569\ub2c8\ub2e4.</p>
+            <div class="flex gap-2">
+              <a href="/api/enhancements/sitemap.xml" target="_blank" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 inline-flex items-center"><i class="fas fa-external-link-alt mr-1"></i>Sitemap \ubcf4\uae30</a>
+              <a href="/api/enhancements/robots.txt" target="_blank" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-300 inline-flex items-center"><i class="fas fa-robot mr-1"></i>robots.txt</a>
+            </div>
+          </div>
+          
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-share-alt text-orange-500 mr-2"></i>4. OG \ud0dc\uadf8 \ucd5c\uc801\ud654</h3>
+            <p class="text-sm text-gray-600 mb-4">SNS \uacf5\uc720 \uc2dc \ubbf8\ub9ac\ubcf4\uae30 \ucd5c\uc801\ud654. \ucf58\ud150\uce20 \uc0dd\uc131 \uc2dc \uc790\ub3d9 \uc801\uc6a9\ub429\ub2c8\ub2e4.</p>
+            <div class="flex gap-2">
+              <span class="badge badge-success"><i class="fas fa-check mr-1"></i>\uc790\ub3d9 \uc801\uc6a9 \uc911</span>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">MedicalWebPage schema\uc5d0 og:image, og:title, og:description \ud3ec\ud568</p>
+          </div>
+        </div>
+
+        <!-- \uce74\ub2c8\ubc1c\ub77c\uc774\uc81c\uc774\uc158 \uac10\uc9c0 -->
+        <div class="card p-6 mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-copy text-red-500 mr-2"></i>\uce74\ub2c8\ubc1c\ub77c\uc774\uc81c\uc774\uc158 \uac10\uc9c0</h3>
+            <button onclick="checkCannibalization()" class="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-xs hover:bg-red-200"><i class="fas fa-search mr-1"></i>\uac80\uc0ac \uc2e4\ud589</button>
+          </div>
+          <div id="cannibalization-result" class="text-sm text-gray-500">\uc704 \ubc84\ud2bc\uc744 \ub20c\ub7ec \ud0a4\uc6cc\ub4dc \uc911\ubcf5 \uc704\ud5d8\uc744 \ud655\uc778\ud558\uc138\uc694.</div>
+        </div>
+
+        <!-- \uc54c\ub9bc \uc124\uc815 -->
+        <div class="card p-6">
+          <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-bell text-yellow-500 mr-2"></i>8. \uc54c\ub9bc \uc2dc\uc2a4\ud15c \uc124\uc815</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm font-medium text-gray-700 mb-1 block"><i class="fab fa-slack mr-1"></i>\uc2ac\ub799 Webhook URL</label>
+              <input id="set-slack-webhook" type="url" value="\${notifStatus.slack_url || ''}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://hooks.slack.com/services/...">
+              <p class="text-xs text-gray-400 mt-1">\uc2ac\ub799 > \uc571 > Incoming Webhooks\uc5d0\uc11c \uc0dd\uc131</p>
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700 mb-1 block"><i class="fas fa-envelope mr-1"></i>\uc774\uba54\uc77c Webhook URL</label>
+              <input id="set-email-webhook" type="url" value="\${notifStatus.email_url || ''}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://hook.us1.make.com/...">
+              <p class="text-xs text-gray-400 mt-1">Zapier / Make / n8n \ub4f1\uc5d0\uc11c Webhook URL \uc0dd\uc131</p>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-4">
+            <button onclick="saveNotificationSettings()" class="bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-yellow-700"><i class="fas fa-save mr-1"></i>\uc54c\ub9bc \uc124\uc815 \uc800\uc7a5</button>
+            <button onclick="testNotification()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-300"><i class="fas fa-paper-plane mr-1"></i>\ud14c\uc2a4\ud2b8 \uc804\uc1a1</button>
+          </div>
+        </div>
+      \`;
+      
+      // \uc54c\ub9bc URL \ub85c\ub4dc
+      try {
+        const settings = await api('/settings');
+        const allSettings = settings.settings || [];
+        const slackUrl = (allSettings.find(s=>s.key==='slack_webhook_url')||{}).value || '';
+        const emailUrl = (allSettings.find(s=>s.key==='email_webhook_url')||{}).value || '';
+        if(slackUrl) document.getElementById('set-slack-webhook').value = slackUrl;
+        if(emailUrl) document.getElementById('set-email-webhook').value = emailUrl;
+      } catch {}
+    }
+
+    // SEO Tool Actions
+    async function runBackfillSchema(dryRun) {
+      const el = document.getElementById('schema-result');
+      el.className = 'mt-3 text-sm p-3 bg-blue-50 rounded-lg'; el.innerHTML = '<div class="spinner"></div> Schema \uc0bd\uc785 \uc911...';
+      try {
+        const res = await api('/enhancements/backfill-schema', { method: 'POST', body: JSON.stringify({ dry_run: dryRun }) });
+        el.className = 'mt-3 text-sm p-3 bg-green-50 rounded-lg text-green-700';
+        el.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + res.message + (dryRun ? ' (Dry Run)' : '');
+        showToast(res.message);
+      } catch(e) { el.className = 'mt-3 text-sm p-3 bg-red-50 rounded-lg text-red-700'; el.innerHTML = e.message; }
+    }
+
+    async function runBackfillLinks(dryRun, updateInblog) {
+      const el = document.getElementById('links-result');
+      el.className = 'mt-3 text-sm p-3 bg-blue-50 rounded-lg'; el.innerHTML = '<div class="spinner"></div> \ub0b4\ubd80 \ub9c1\ud06c \uc0bd\uc785 \uc911...';
+      try {
+        const res = await api('/enhancements/backfill-links', { method: 'POST', body: JSON.stringify({ dry_run: dryRun, update_inblog: updateInblog }) });
+        el.className = 'mt-3 text-sm p-3 bg-green-50 rounded-lg text-green-700';
+        let msg = res.message;
+        if (res.inblog_updated > 0) msg += ' | Inblog ' + res.inblog_updated + '\uac74 \ub3d9\uae30\ud654';
+        el.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + msg;
+        showToast(msg);
+      } catch(e) { el.className = 'mt-3 text-sm p-3 bg-red-50 rounded-lg text-red-700'; el.innerHTML = e.message; }
+    }
+
+    async function runBackfillAll() {
+      if(!confirm('Schema \uc0bd\uc785 + \ub0b4\ubd80 \ub9c1\ud06c + Inblog \ub3d9\uae30\ud654\ub97c \uba78\uc2dc \uc2e4\ud589\ud569\ub2c8\ub2e4.\\n\uacc4\uc18d\ud558\uc2dc\uaca0\uc2b5\ub2c8\uae4c?')) return;
+      showToast('\ud1b5\ud569 \uac1c\uc120 \uc2e4\ud589 \uc911...', 'info');
+      try {
+        const res = await api('/enhancements/run-all', { method: 'POST', body: JSON.stringify({ update_inblog: true }) });
+        let msg = 'Schema: ' + (res.results.schema?.updated || 0) + '\uac74';
+        msg += ', \ub9c1\ud06c: ' + (res.results.links?.updated || 0) + '\uac74';
+        if(res.results.inblog) msg += ', Inblog: ' + (res.results.inblog?.updated || 0) + '\uac74';
+        showToast(msg);
+        renderSeoTools();
+      } catch(e) {}
+    }
+
+    async function checkCannibalization() {
+      const el = document.getElementById('cannibalization-result');
+      el.innerHTML = '<div class="spinner"></div> \uac80\uc0ac \uc911...';
+      try {
+        const res = await api('/enhancements/cannibalization');
+        if (res.pairs.length === 0) {
+          el.innerHTML = '<div class="p-3 bg-green-50 rounded-lg text-green-700"><i class="fas fa-check-circle mr-1"></i>\uce74\ub2c8\ubc1c\ub77c\uc774\uc81c\uc774\uc158 \uc704\ud5d8 \uc5c6\uc74c! (' + res.total_published + '\uac1c \uac8c\uc2dc\ubb3c \uac80\uc0ac)</div>';
+        } else {
+          let html = '<div class="space-y-2">';
+          res.pairs.forEach(p => {
+            html += '<div class="p-3 bg-' + (p.risk_score >= 80 ? 'red' : p.risk_score >= 60 ? 'yellow' : 'green') + '-50 rounded-lg text-sm">';
+            html += '<div class="font-medium">' + p.recommendation + ' (\uc704\ud5d8\ub3c4: ' + p.risk_score + '%)</div>';
+            html += '<div class="text-gray-600 mt-1">A: ' + p.content_a.keyword + ' (SEO ' + p.content_a.seo + ')</div>';
+            html += '<div class="text-gray-600">B: ' + p.content_b.keyword + ' (SEO ' + p.content_b.seo + ')</div>';
+            html += '</div>';
+          });
+          html += '</div>';
+          el.innerHTML = html;
+        }
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    async function saveNotificationSettings() {
+      const settings = [
+        { key: 'slack_webhook_url', value: document.getElementById('set-slack-webhook').value },
+        { key: 'email_webhook_url', value: document.getElementById('set-email-webhook').value },
+        { key: 'notifications_enabled', value: 'true' }
+      ];
+      await api('/settings', { method: 'PUT', body: JSON.stringify({ settings }) });
+      showToast('\uc54c\ub9bc \uc124\uc815\uc774 \uc800\uc7a5\ub418\uc5c8\uc2b5\ub2c8\ub2e4');
+    }
+
+    async function testNotification() {
+      showToast('\ud14c\uc2a4\ud2b8 \uc54c\ub9bc \uc804\uc1a1 \uc911...', 'info');
+      try {
+        await api('/enhancements/test-notification', { method: 'POST' });
+        showToast('\ud14c\uc2a4\ud2b8 \uc54c\ub9bc\uc774 \uc804\uc1a1\ub418\uc5c8\uc2b5\ub2c8\ub2e4!');
+      } catch(e) {}
+    }
+
     // ===== Settings =====
     async function renderSettings() {
       const data = await api('/settings');
@@ -1012,31 +1223,31 @@ function getIndexHtml(): string {
       c.innerHTML = \`
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div class="card p-6">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-plug mr-2 text-primary-500"></i>인블로그 API</h3>
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-plug mr-2 text-primary-500"></i>\uc778\ube14\ub85c\uadf8 API</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API 키</label><div class="flex gap-2"><input id="set-inblog-key" type="password" value="\${getValue('inblog_api_key')}" class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="Bearer token"><button onclick="verifyInblogKey()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium hover:bg-green-700 whitespace-nowrap"><i class="fas fa-check-circle mr-1"></i>검증</button></div></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API \ud0a4</label><div class="flex gap-2"><input id="set-inblog-key" type="password" value="\${getValue('inblog_api_key')}" class="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="Bearer token"><button onclick="verifyInblogKey()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium hover:bg-green-700 whitespace-nowrap"><i class="fas fa-check-circle mr-1"></i>\uac80\uc99d</button></div></div>
               <div id="inblog-verify-result" class="hidden p-3 rounded-lg text-sm"></div>
             </div>
           </div>
           <div class="card p-6">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-robot mr-2 text-primary-500"></i>Claude API</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API 키</label><input id="set-claude-key" type="password" value="\${getValue('claude_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-ant-..."></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API \ud0a4</label><input id="set-claude-key" type="password" value="\${getValue('claude_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-ant-..."></div>
             </div>
           </div>
           <div class="card p-6">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-hospital mr-2 text-primary-500"></i>병원 설정</h3>
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-hospital mr-2 text-primary-500"></i>\ubcd1\uc6d0 \uc124\uc815</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">병원명 <span class="text-xs text-gray-400">(내부 관리용, 콘텐츠에 노출 안 됨)</span></label><input id="set-clinic-name" type="text" value="\${getValue('clinic_name')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="OO치과"></div>
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">지역</label><input id="set-clinic-region" type="text" value="\${getValue('clinic_region')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="서울 강남구"></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">\ubcd1\uc6d0\uba85 <span class="text-xs text-gray-400">(\ub0b4\ubd80 \uad00\ub9ac\uc6a9, \ucf58\ud150\uce20\uc5d0 \ub178\ucd9c \uc548 \ub428)</span></label><input id="set-clinic-name" type="text" value="\${getValue('clinic_name')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="OO\uce58\uacfc"></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">\uc9c0\uc5ed</label><input id="set-clinic-region" type="text" value="\${getValue('clinic_region')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="\uc11c\uc6b8 \uac15\ub0a8\uad6c"></div>
             </div>
           </div>
           <div class="card p-6">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-bell mr-2 text-primary-500"></i>알림 설정</h3>
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-sliders-h mr-2 text-primary-500"></i>\ubc1c\ud589 \uc124\uc815</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">알림 이메일</label><input id="set-email" type="email" value="\${getValue('notification_email')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="admin@clinic.com"></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">\uc54c\ub9bc \uc774\uba54\uc77c</label><input id="set-email" type="email" value="\${getValue('notification_email')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="admin@clinic.com"></div>
               <div class="flex items-center gap-3">
-                <label class="text-sm font-medium text-gray-700">자동 발행</label>
+                <label class="text-sm font-medium text-gray-700">\uc790\ub3d9 \ubc1c\ud589</label>
                 <label class="relative inline-flex items-center cursor-pointer">
                   <input id="set-auto" type="checkbox" class="sr-only peer" \${getValue('auto_publish')==='true'?'checked':''}>
                   <div class="w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-primary-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
@@ -1045,13 +1256,13 @@ function getIndexHtml(): string {
             </div>
           </div>
           <div class="card p-6 lg:col-span-2">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-gavel mr-2 text-primary-500"></i>의료 면책 문구</h3>
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-gavel mr-2 text-primary-500"></i>\uc758\ub8cc \uba74\ucc45 \ubb38\uad6c</h3>
             <textarea id="set-disclaimer" rows="3" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">\${getValue('medical_disclaimer')}</textarea>
-            <p class="text-xs text-gray-400 mt-1">모든 포스트 하단에 자동 삽입됩니다.</p>
+            <p class="text-xs text-gray-400 mt-1">\ubaa8\ub4e0 \ud3ec\uc2a4\ud2b8 \ud558\ub2e8\uc5d0 \uc790\ub3d9 \uc0bd\uc785\ub429\ub2c8\ub2e4.</p>
           </div>
         </div>
         <div class="mt-6 flex justify-end">
-          <button onclick="saveSettings()" class="bg-primary-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-primary-700 transition"><i class="fas fa-save mr-1"></i> 전체 설정 저장</button>
+          <button onclick="saveSettings()" class="bg-primary-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-primary-700 transition"><i class="fas fa-save mr-1"></i> \uc804\uccb4 \uc124\uc815 \uc800\uc7a5</button>
         </div>
       \`;
     }
