@@ -115,13 +115,17 @@ ${typeGuide}
 - 마지막 1문장: 이 글을 읽으면 무엇이 해소되는지 약속 ("이 글을 끝까지 읽으시면, ~를 판단할 수 있게 됩니다")
 - 절대 쓰지 않는 시작: "안녕하세요", "오늘은 ~에 대해 알아보겠습니다", "많은 분들이"
 
-## 제목(H1) 규칙
+## 제목(H1) 규칙 — "무서울까?" 패턴 필수
 - 키워드를 앞쪽 30자 이내에 배치
-- 환자의 감정이나 질문이 느껴지는 제목 선호
-  - 좋은 예: "임플란트 수술, 정말 아플까? — 통증부터 회복까지 솔직한 안내 (2026)"
-  - 좋은 예: "사랑니 발치 후 이 통증, 정상인가요? — 3일 차까지 체크리스트"
+- **제목에 반드시 "무서울까?", "아플까?", "괜찮을까?" 중 하나를 포함**해야 합니다 (환자가 실제로 느끼는 감정 질문)
+  - 좋은 예: "임플란트 수술, 정말 무서울까? — 통증부터 회복까지 솔직 안내 (2026)"
+  - 좋은 예: "사랑니 발치 아플까? — 실제 통증과 회복 기간 총정리 (2026)"
+  - 좋은 예: "치아 교정 첫 장치, 무서울까? — 불안한 마음을 위한 솔직 가이드"
+  - 좋은 예: "신경치료 괜찮을까? — 통증 걱정되는 분을 위한 단계별 안내"
   - 나쁜 예: "임플란트 수술 과정 총정리" (감정이 없음)
+  - 나쁜 예: "사랑니 발치 아프나요?" ("아프나요?" 대신 "아플까?" 사용)
 - 40~65자, 숫자 또는 연도 포함
+- ⚠️ 맞춤법 필수: "무서울까" (✅) "무섭을까" (❌) — ㅂ불규칙 활용 준수
 
 ## H2 작성 원칙 (환자의 질문으로 쓴다)
 - H2는 환자가 머릿속으로 하는 질문 그대로 쓴다
@@ -157,16 +161,21 @@ ${typeGuide}
 
 ## 한국어 맞춤법·문법 (매우 중요 — 전문가 블로그의 신뢰도 직결)
 - 모든 문장은 한국어 맞춤법과 문법을 100% 준수해야 합니다
-- 특히 주의할 맞춤법:
-  - "무섭다/무서울까" (✅) vs "무섭을까" (❌) — 형용사 'ㅂ' 불규칙 활용
-  - "아프다/아플까" (✅) vs "아픕니까" (❌)
-  - "어렵다/어려울까" (✅) vs "어렵을까" (❌)
+- ⚠️ ㅂ불규칙 활용 — 가장 흔한 오류 (절대 틀리지 마세요):
+  - "무섭다" → 미래/추측: "무서울까" (✅) / "무섭을까" (❌❌❌)
+  - "아프다" → 미래/추측: "아플까" (✅) / "아픕을까" (❌)
+  - "어렵다" → 미래/추측: "어려울까" (✅) / "어렵을까" (❌)
+  - "가볍다" → "가벼울까" (✅) / "가볍을까" (❌)
+  - "춥다" → "추울까" (✅) / "춥을까" (❌)
+  - 원리: ㅂ → 우 + ㄹ까 (무섭 → 무서우 + ㄹ까 → 무서울까)
+- 기타 맞춤법:
   - "낫다/나을까" (✅) vs "낳을까" (❌ 다른 뜻)
   - "되다/돼다" 구분: "~할 수 있게 됩니다" (✅), "~할 수 있게 됬습니다" (❌)
   - "안 되다/안 돼요" (✅) vs "안 되요" (❌)
   - "~할까요" (✅) vs "~할까요?" 중복 물음표 금지
 - 의학 용어는 대한치과의사협회 표준 용어를 사용
 - 제목에 맞춤법 오류가 있으면 블로그 전체 신뢰도가 무너집니다 — 제목은 특히 3번 검토하세요
+- 특히 "무서울까", "아플까" 같은 ㅂ불규칙은 반드시 올바른 형태를 사용하세요
 
 써야 하는 것:
 - 수치와 기간 ("보통 2~4주", "환자의 95% 이상은", "48시간 이내에")
@@ -201,6 +210,12 @@ ${typeGuide}
 ## 의료광고법 준수 (YMYL)
 - 필수 면책 문구를 반드시 글 마지막에 삽입
 - 효과 보장 금지, 비교 광고 금지, 비용 단정 금지(범위로만), 브랜드 추천 금지
+
+## ⛔ 절대 금지 — 비용·가격·보험 정보 (이 규칙을 어기면 글 전체가 무효)
+아래 단어를 content_html, title, meta_description에 절대 포함하지 마세요:
+금지 단어: 만원, 만 원, 가격, 비용, 보험 적용, 보험, 실비, 실손, 급여, 비급여, 건강보험, 할부, 할인, 이벤트, 무료 상담, 무료 검진, 수가, 본인부담, 본인 부담, 국민건강, 산정특례, 의료비, 치료비
+이 글은 오직 치료 과정, 증상, 회복, 통증, 적응증, 부작용에 대해서만 다룹니다.
+"보험 적용이 되나요?" 같은 FAQ도 절대 포함하지 마세요. 비용 관련 질문은 모두 제외합니다.
 
 ## 출력 형식 (반드시 유효한 JSON만 출력, 다른 텍스트 금지)
 {
@@ -618,6 +633,36 @@ function calculateSeoScore(content: any, keyword: string): number {
     violations.push(`빈말/인사말: ${foundFluff.length}개`)
   }
 
+  // ===== 9. ㅂ불규칙 맞춤법 위반 검사 (-5점) =====
+  const bIrregularViolations = [
+    { wrong: /무섭을/, correct: '무서울' },
+    { wrong: /아픕을/, correct: '아플' },
+    { wrong: /어렵을/, correct: '어려울' },
+    { wrong: /가벼을/, correct: '가벼울' },
+    { wrong: /춥을/, correct: '추울' },
+    { wrong: /됬습니다/, correct: '됐습니다' },
+  ]
+  const foundSpellingErrors: string[] = []
+  const allTextForSpelling = title + ' ' + meta + ' ' + plainText
+  for (const check of bIrregularViolations) {
+    if (check.wrong.test(allTextForSpelling)) {
+      foundSpellingErrors.push(`"${check.wrong.source}" → "${check.correct}"`)
+    }
+  }
+  if (foundSpellingErrors.length > 0) {
+    score -= Math.min(5, foundSpellingErrors.length * 2)
+    violations.push(`ㅂ불규칙 맞춤법 오류: ${foundSpellingErrors.join(', ')}`)
+  }
+
+  // ===== 10. 제목에 "무서울까/아플까/괜찮을까" 포함 여부 (+3점 / -2점) =====
+  const titleHasEmotionQuestion = /무서울까|아플까|괜찮을까|불안할까|두려울까/.test(title)
+  if (titleHasEmotionQuestion) {
+    score += 3
+  } else {
+    score -= 2
+    violations.push('제목에 환자 감정 질문("무서울까?"/"아플까?") 없음')
+  }
+
   if (violations.length > 0) {
     console.log(`[SEO 검증] "${keyword}" 위반사항: ${violations.join(' | ')}`)
   }
@@ -625,23 +670,30 @@ function calculateSeoScore(content: any, keyword: string): number {
   return Math.min(100, Math.max(0, score))
 }
 
-// ===== 썸네일 생성 (실제 AI 이미지 생성) =====
+// ===== 썸네일 생성 (고급 AI 이미지 생성) =====
 async function generateThumbnail(keyword: string, title: string, env?: any): Promise<{ url: string; prompt: string }> {
-  const prompt = `Clean modern dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, minimalist flat design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, professional healthcare aesthetic, suitable for medical blog OG image thumbnail 1200x630.`
+  const prompt = `High quality photorealistic 3D dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, clean modern design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, no logos, professional healthcare aesthetic, studio lighting, suitable for medical blog OG image thumbnail 1200x630.`
   
   // 폴백용 플레이스홀더
   const placeholderUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(keyword)}&font=sans-serif`
 
   try {
-    // 방법 1: Pollinations AI (무료, API 키 불필요)
-    const encodedPrompt = encodeURIComponent(prompt)
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=flux&nologo=true&seed=${Date.now()}`
+    // 방법 1: Pollinations AI turbo 모델 (고품질, 무료)
+    const seed = Math.abs(Date.now() % 999999)
+    const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=turbo&nologo=true&seed=${seed}`
     
-    // URL 생성만 하고 이미지 접근성 확인 (실제 이미지는 Inblog 크롤러가 가져감)
-    const checkResponse = await fetch(pollinationsUrl, { method: 'HEAD', redirect: 'follow' })
+    const checkResponse = await fetch(pollinationsUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(20000) })
     
     if (checkResponse.ok || checkResponse.status === 302 || checkResponse.status === 301) {
       return { url: pollinationsUrl, prompt }
+    }
+    
+    // 방법 1.5: zimage 모델 폴백
+    const zimageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=zimage&nologo=true&seed=${seed}`
+    const zimageCheck = await fetch(zimageUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(20000) })
+    if (zimageCheck.ok || zimageCheck.status === 302 || zimageCheck.status === 301) {
+      return { url: zimageUrl, prompt }
     }
     
     // 방법 2: Workers AI 바인딩 사용 (프로덕션에서 AI 바인딩 설정 시)
@@ -652,11 +704,9 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
           width: 1200,
           height: 630
         })
-        // Workers AI는 바이너리 이미지를 반환 — R2에 업로드 필요
         if (env?.R2 && aiResult) {
           const key = `thumbnails/${Date.now()}-${keyword.replace(/\s+/g, '-').substring(0, 30)}.png`
           await env.R2.put(key, aiResult, { httpMetadata: { contentType: 'image/png' } })
-          // R2 퍼블릭 URL 또는 커스텀 도메인 필요
           return { url: `/${key}`, prompt }
         }
       } catch (aiErr) {

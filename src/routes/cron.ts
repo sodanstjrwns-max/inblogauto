@@ -258,6 +258,23 @@ cronApp.post('/', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
+      // === 0.5단계: 비용/보험 콘텐츠 후처리 (Claude가 여전히 삽입할 경우 제거) ===
+      const COST_REMOVAL_PATTERNS = [
+        /보험\s*적용[^<]{0,100}/g,
+        /실비[^<]{0,50}/g,
+        /급여[^<]{0,50}/g,
+        /비급여[^<]{0,50}/g,
+        /건강보험[^<]{0,80}/g,
+        /\d+만\s*원[^<]{0,50}/g,
+        /<details[^>]*>[\s\S]*?(보험|실비|급여|비용|가격|만\s*원)[\s\S]*?<\/details>/gi,
+      ]
+      let cleanedHtml = bestContent.content_html
+      for (const pat of COST_REMOVAL_PATTERNS) {
+        // FAQ details 태그 전체 제거 (비용 관련)
+        cleanedHtml = cleanedHtml.replace(pat, '')
+      }
+      bestContent.content_html = cleanedHtml
+
       // === 1단계: 콘텐츠를 먼저 DB에 저장 (이미지 없이) ===
       let finalHtml = bestContent.content_html
       
@@ -273,10 +290,8 @@ cronApp.post('/', async (c) => {
 
       const contentId = insertResult.meta.last_row_id as number
 
-      // === 2단계: AI 이미지 생성 (contentId로 D1에 저장) ===
+      // === 2단계: AI 이미지 생성 (썸네일 1장만 — Inblog 1MB 제한 대응) ===
       let thumbnailUrl = ''
-      let infoImageUrl = ''
-      let infoCaption = ''
       
       try {
         const thumbResult = await generateAIImage(
@@ -284,30 +299,20 @@ cronApp.post('/', async (c) => {
         )
         thumbnailUrl = thumbResult.url
         
-        const infoResult = await generateAIImage(
-          c.env, kw.keyword, kw.category || 'general', 'illustration', classified.type, contentId
-        )
-        infoImageUrl = infoResult.url
-        infoCaption = infoResult.caption
+        // ★ 안전장치: data URI가 반환되면 Pollinations 폴백 (절대 base64를 Inblog에 전송 금지)
+        if (thumbnailUrl.startsWith('data:')) {
+          console.warn('[이미지] data URI 감지 → Pollinations 폴백 강제 전환')
+          const seed = Math.abs(Date.now() % 999999)
+          const encodedPrompt = encodeURIComponent(`Clean modern dental medical illustration about ${kw.keyword}, soft pastel colors, no text`.substring(0, 180))
+          thumbnailUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true`
+        }
       } catch (imgErr: any) {
         console.error('이미지 생성 실패, 폴백 사용:', imgErr.message)
         thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
-        infoImageUrl = thumbnailUrl
-        infoCaption = '▲ 참고 이미지'
       }
 
       // === 3단계: 이미지 URL을 HTML에 삽입하고 DB 업데이트 ===
-      // 본문 첫 번째 H2 섹션 뒤에 인포그래픽 삽입
-      const firstH2End = finalHtml.indexOf('</h2>')
-      if (firstH2End !== -1) {
-        const afterFirstH2 = finalHtml.indexOf('<h2', firstH2End + 5)
-        if (afterFirstH2 !== -1) {
-          const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${kw.keyword} 관련 이미지" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">${infoCaption}</figcaption></figure>`
-          finalHtml = finalHtml.slice(0, afterFirstH2) + infographicHtml + finalHtml.slice(afterFirstH2)
-        }
-      }
-
-      // 상단 썸네일
+      // 상단 썸네일만 삽입 (본문 내 추가 이미지 삭제 → 1MB 제한 방지)
       finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
       // === 3.5단계: 내부 링크 자동 삽입 ===
@@ -504,6 +509,8 @@ ${internalLinksBlock}
 - 환자가 읽고 나서 "이 정도면 괜찮겠다"라고 느낄 수 있어야 합니다
 - "치과에서 이렇게 질문해보세요" 같은 임파워먼트 문장을 포함하세요
 
+⛔ 절대 금지: "만원", "만 원", "가격", "비용", "보험 적용", "보험", "실비", "실손", "급여", "비급여", "건강보험", "할부", "할인", "무료 상담", "무료 검진", "수가", "본인부담", "의료비", "치료비" — 이 단어들을 title, content_html, meta_description, FAQ 어디에도 절대 쓰지 마세요. 비용 관련 FAQ 질문도 포함 금지.
+
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -550,7 +557,7 @@ const cronHandler = cronApp
 // 콘텐츠 유형별 이미지 프롬프트 템플릿
 function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string): string {
   const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
-  const baseStyle = `High quality photorealistic 3D medical illustration, clean modern design, soft pastel colors with light blue and white palette, ${noText}, no human faces, no logos, professional dental healthcare aesthetic, studio lighting, 8k quality`
+  const baseStyle = `High quality photorealistic 3D medical illustration, clean modern design, soft pastel colors with light blue and white palette, ${noText}, no human faces, no logos, professional dental healthcare aesthetic, studio lighting, cinematic composition, 8k quality, ultra-detailed`
   
   // 카테고리별 핵심 시각 요소
   const categoryVisuals: Record<string, string> = {
@@ -618,7 +625,7 @@ async function saveImageToStorage(
   return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
 }
 
-// 메인 이미지 생성 함수
+// 메인 이미지 생성 함수 (고급 모델 우선)
 async function generateAIImage(
   env: any, keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string,
   contentId?: number
@@ -626,73 +633,120 @@ async function generateAIImage(
   const prompt = buildImagePrompt(keyword, category, purpose, contentType)
   const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
   
-  // 방법 1: Cloudflare Workers AI — FLUX.2 [dev] (고급 모델)
+  // 방법 1: Cloudflare Workers AI (FLUX.2 dev — multipart 형식 필수)
   if (env?.AI) {
+    // FLUX.2 dev: multipart 형식으로 호출 (고품질)
+    try {
+      // FLUX.2 dev는 multipart 형식이 필요 (Cloudflare Workers AI 문서 기준)
+      const formData = new FormData()
+      formData.append('prompt', prompt)
+      formData.append('num_steps', '20')
+      // @ts-ignore - Workers AI multipart
+      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-2-dev', formData)
+      const raw = (aiResult as any)?.image ?? aiResult
+      
+      if (raw && typeof raw === 'string' && raw.length > 1000) {
+        console.log(`[이미지] FLUX.2 dev 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
+        if (contentId && env?.R2) {
+          try {
+            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
+            console.log(`[이미지] R2 저장 완료: ${savedUrl}`)
+            return { url: savedUrl, caption }
+          } catch (r2Err: any) {
+            console.error('R2 저장 실패:', r2Err.message)
+          }
+        }
+      }
+    } catch (fluxDevErr: any) {
+      console.warn(`FLUX.2 dev 실패 (multipart): ${fluxDevErr.message}`)
+    }
+    
+    // FLUX.2 dev를 JSON 방식으로 다시 시도
     try {
       const aiResult = await env.AI.run('@cf/black-forest-labs/flux-2-dev', {
         prompt: prompt,
         num_steps: 20,
-        guidance: 7.5,
       })
-      
-      // FLUX.2 dev는 { image: Base64String } 형태로 반환
-      const raw = aiResult?.image ?? aiResult
+      const raw = (aiResult as any)?.image ?? aiResult
       
       if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] FLUX.2 dev 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
-        
-        // R2에도 저장 (자체 서빙용 백업)
-        if (contentId) {
-          try { await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw) } catch {}
-        }
-        
-        // ★ 핵심: data URI로 반환 → Inblog가 자동으로 자기 CDN에 업로드
-        return { url: `data:image/jpeg;base64,${raw}`, caption }
-      }
-    } catch (aiErr: any) {
-      console.error('FLUX.2 dev 이미지 생성 실패, schnell 폴백 시도:', aiErr.message)
-      // FLUX.2 dev 실패 시 schnell 폴백
-      try {
-        const fallbackResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-          prompt: prompt,
-          num_steps: 4,
-        })
-        const fallbackRaw = fallbackResult?.image ?? fallbackResult
-        if (fallbackRaw && typeof fallbackRaw === 'string' && fallbackRaw.length > 1000) {
-          console.log(`[이미지] schnell 폴백 성공: ${keyword} (${purpose})`)
-          if (contentId) {
-            try { await saveImageToStorage(env, contentId, keyword, purpose, prompt, fallbackRaw) } catch {}
+        console.log(`[이미지] FLUX.2 dev (JSON) 생성 성공: ${keyword}, base64 len=${raw.length}`)
+        if (contentId && env?.R2) {
+          try {
+            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
+            return { url: savedUrl, caption }
+          } catch (r2Err: any) {
+            console.error('R2 저장 실패:', r2Err.message)
           }
-          return { url: `data:image/jpeg;base64,${fallbackRaw}`, caption }
         }
-      } catch (schnellErr: any) {
-        console.error('schnell 폴백도 실패:', schnellErr.message)
       }
+    } catch (fluxJsonErr: any) {
+      console.warn(`FLUX.2 dev (JSON) 실패: ${fluxJsonErr.message}`)
+    }
+    
+    // schnell 폴백 (빠르지만 무료 할당량 제한 있음)
+    try {
+      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+        prompt: prompt,
+        num_steps: 4,
+      })
+      const raw = (aiResult as any)?.image ?? aiResult
+      
+      if (raw && typeof raw === 'string' && raw.length > 1000) {
+        console.log(`[이미지] schnell 생성 성공: ${keyword}, base64 len=${raw.length}`)
+        if (contentId && env?.R2) {
+          try {
+            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
+            return { url: savedUrl, caption }
+          } catch (r2Err: any) {
+            console.error('R2 저장 실패:', r2Err.message)
+          }
+        }
+      }
+    } catch (schnellErr: any) {
+      console.warn(`schnell 실패: ${schnellErr.message}`)
     }
   }
   
-  // 방법 2: Pollinations AI (무료 외부 서비스)
+  // 방법 2: Pollinations AI (고품질 turbo 모델 사용 — URL 기반이라 크기 문제 없음)
   try {
     const seed = Math.abs(hashString(keyword + purpose + contentType))
-    const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true`
+    const shortPrompt = prompt.substring(0, 200)
+    const encodedPrompt = encodeURIComponent(shortPrompt)
+    // turbo 모델: 고품질 이미지 생성 (무료)
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true&model=turbo`
     
-    // URL이 유효한지 HEAD 요청으로 확인
-    const headCheck = await fetch(pollinationsUrl, { method: 'HEAD', signal: AbortSignal.timeout(10000) })
-    if (headCheck.ok) {
-      console.log(`[이미지] Pollinations 사용: ${keyword} (${purpose})`)
+    const headCheck = await fetch(pollinationsUrl, { method: 'HEAD', signal: AbortSignal.timeout(20000) })
+    if (headCheck.ok || headCheck.status === 302 || headCheck.status === 301) {
+      console.log(`[이미지] Pollinations turbo 사용: ${keyword} (${purpose})`)
       return { url: pollinationsUrl, caption }
     }
   } catch (pollErr: any) {
-    console.error('Pollinations 실패:', pollErr.message)
+    console.error('Pollinations turbo 실패:', pollErr.message)
+  }
+  
+  // 방법 2.5: Pollinations zimage 모델 폴백
+  try {
+    const seed = Math.abs(hashString(keyword + purpose + 'zimage'))
+    const shortPrompt = prompt.substring(0, 200)
+    const encodedPrompt = encodeURIComponent(shortPrompt)
+    const zimageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true&model=zimage`
+    
+    const headCheck = await fetch(zimageUrl, { method: 'HEAD', signal: AbortSignal.timeout(20000) })
+    if (headCheck.ok || headCheck.status === 302 || headCheck.status === 301) {
+      console.log(`[이미지] Pollinations zimage 사용: ${keyword} (${purpose})`)
+      return { url: zimageUrl, caption }
+    }
+  } catch (zimageErr: any) {
+    console.error('Pollinations zimage 실패:', zimageErr.message)
   }
 
-  // 방법 3: 플레이스홀더 폴백
+  // 방법 3: 플레이스홀더 폴백 (최후의 수단)
   const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
   const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
   const bg = colors[colorIdx]
   const fallbackUrl = `https://placehold.co/1200x630/${bg}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
-  console.log(`[이미지] 폴백 사용: ${keyword} (${purpose})`)
+  console.log(`[이미지] 플레이스홀더 폴백: ${keyword} (${purpose})`)
   return { url: fallbackUrl, caption }
 }
 

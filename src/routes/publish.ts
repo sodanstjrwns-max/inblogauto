@@ -232,7 +232,14 @@ async function createInblogPost(
         title: post.title,
         slug: post.slug,
         description: post.description || post.meta_description,
-        content_html: post.content_html,
+        // ★ content_html에서 data URI 이미지 완전 제거 (Inblog 1MB 제한 대응)
+        // 1) figure+img 태그 제거
+        // 2) 단독 img 태그의 data URI도 제거
+        // 3) 혹시 남아있는 모든 data:image 참조 제거
+        content_html: post.content_html
+          .replace(/<figure[^>]*>[\s\S]*?<img[^>]*src=["']data:image[^"']*["'][^>]*>[\s\S]*?<\/figure>/gi, '')
+          .replace(/<img[^>]*src=["']data:image[^"']*["'][^>]*\/?>/gi, '')
+          .replace(/src=["']data:image\/[^"']+["']/gi, 'src=""'),
         meta_description: post.meta_description,
         published: false, // 항상 draft로 먼저 생성
         // OG 태그 최적화 — SNS 공유 시 미리보기
@@ -243,7 +250,8 @@ async function createInblogPost(
   }
 
   // Featured image (thumbnail) — OG image로도 사용
-  if (post.image) {
+  // ★ data URI는 Inblog 1MB 제한 위반이므로 절대 전송 금지
+  if (post.image && !post.image.startsWith('data:')) {
     requestBody.data.attributes.image = post.image
     requestBody.data.attributes.og_image = post.image
   }
