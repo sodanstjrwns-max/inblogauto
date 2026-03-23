@@ -30,14 +30,15 @@ function generateDentalVariations(seedKeyword: string): string[] {
   const variations: string[] = []
   const kw = seedKeyword.trim()
   
-  // 접미사 확장 (환자 질문 패턴)
+  // 접미사 확장 (환자 질문 패턴 - 비용/보험 제외, 진료 정보만)
   const suffixes = [
-    '비용', '가격', '후기', '추천', '과정',
+    '과정', '후기', '추천',
     '통증', '아프나요', '부작용', '회복 기간',
-    '보험 적용', '실비', '주의사항',
+    '주의사항',
     '장단점', '수명', '관리법',
     '실패 확률', '안전한가요', '후회',
-    '잘하는 곳', '잘하는 치과'
+    '적응증', '필요성', '증상',
+    '치료 기간', '치료 방법', '내원 횟수'
   ]
   
   // 접두사 확장
@@ -45,7 +46,7 @@ function generateDentalVariations(seedKeyword: string): string[] {
     '대전', '세종', '청주', '천안'
   ]
   
-  // 질문형 패턴
+  // 질문형 패턴 (진료 정보 중심)
   const questionPatterns = [
     `${kw} 꼭 해야하나요`,
     `${kw} 안 하면 어떻게 되나요`,
@@ -53,6 +54,9 @@ function generateDentalVariations(seedKeyword: string): string[] {
     `${kw} 무섭다`,
     `${kw} 후 음식`,
     `${kw} 후 운동`,
+    `${kw} 적응증`,
+    `${kw} 후유증`,
+    `${kw} 치료 기간`,
   ]
   
   for (const suffix of suffixes) {
@@ -87,6 +91,13 @@ function generateDentalVariations(seedKeyword: string): string[] {
 }
 
 // ===== 3. 키워드 자동 분류 =====
+// 비용/보험/가격 관련 키워드 필터 (수집 단계에서 차단)
+const BLOCKED_KEYWORD_PATTERNS = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|원\s*$|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|맛집/
+
+function isBlockedKeyword(keyword: string): boolean {
+  return BLOCKED_KEYWORD_PATTERNS.test(keyword.toLowerCase())
+}
+
 function classifyKeyword(keyword: string): { 
   category: string
   subcategory: string 
@@ -104,8 +115,8 @@ function classifyKeyword(keyword: string): {
   // implant
   if (/임플란트|뼈이식|상악동|골이식|픽스처|어버트먼트/.test(kw)) {
     category = 'implant'
-    if (/비용|가격|할부/.test(kw)) { subcategory = '비용'; priority = 80 }
-    else if (/보험|실비|건강보험/.test(kw)) { subcategory = '보험'; priority = 85 }
+    if (/비용|가격|할부/.test(kw)) { subcategory = '비용'; priority = 10 } // 비용 키워드: 최저 우선순위
+    else if (/보험|실비|건강보험/.test(kw)) { subcategory = '보험'; priority = 10 } // 보험 키워드: 최저 우선순위
     else if (/후|회복|통증|붓기|출혈|음식|운동|담배|술/.test(kw)) { subcategory = '회복'; priority = 75 }
     else if (/과정|시간|방법|마취|절개/.test(kw)) { subcategory = '과정'; priority = 75 }
     else if (/실패|위험|부작용|흔들|주위염|냄새/.test(kw)) { subcategory = '문제'; priority = 80 }
@@ -119,7 +130,7 @@ function classifyKeyword(keyword: string): {
   // orthodontics
   else if (/교정|투명교정|인비절라인|라미네이트|미백|설측|세라믹교정|돌출입|덧니|벌어짐|주걱/.test(kw)) {
     category = 'orthodontics'
-    if (/비용|가격/.test(kw)) { subcategory = '비용'; priority = 80 }
+    if (/비용|가격/.test(kw)) { subcategory = '비용'; priority = 10 } // 비용 키워드: 최저 우선순위
     else if (/vs|비교|차이/.test(kw)) { subcategory = '비교'; search_intent = 'comparison'; priority = 80 }
     else if (/아이|소아|초등|유치|몇살/.test(kw)) { subcategory = '소아'; priority = 75 }
     else if (/미백|하얗|누런/.test(kw)) { subcategory = '미백'; priority = 75 }
@@ -155,7 +166,7 @@ function classifyKeyword(keyword: string): {
     else if (/크라운|보철|인레이|온레이/.test(kw)) { subcategory = '보철'; priority = 75 }
     else if (/통증|응급|아프|부러|빠졌/.test(kw)) { subcategory = '응급'; priority = 85 }
     else if (/턱관절|이갈이/.test(kw)) { subcategory = '턱관절'; priority = 70 }
-    else if (/보험|실비|건강보험|비급여/.test(kw)) { subcategory = '보험'; priority = 80 }
+    else if (/보험|실비|건강보험|비급여/.test(kw)) { subcategory = '보험'; priority = 10 } // 보험 키워드: 최저 우선순위
     else if (/마취|수면/.test(kw)) { subcategory = '마취'; priority = 70 }
     else { subcategory = '기타'; priority = 60 }
   }
@@ -219,15 +230,21 @@ keywordDiscoveryRoutes.post('/discover', async (c) => {
         const reviewSuggestions = await fetchGoogleSuggestions(`${seed} 후기`)
         googleSuggestions.push(...reviewSuggestions)
         
-        // 비용 조합
-        const costSuggestions = await fetchGoogleSuggestions(`${seed} 비용`)
-        googleSuggestions.push(...costSuggestions)
+        // "부작용" 조합 (비용 대신 진료 정보 중심)
+        const sideEffectSuggestions = await fetchGoogleSuggestions(`${seed} 부작용`)
+        googleSuggestions.push(...sideEffectSuggestions)
+        
+        // "과정" 조합
+        const processSuggestions = await fetchGoogleSuggestions(`${seed} 과정`)
+        googleSuggestions.push(...processSuggestions)
       }
       
       // 3. 전체 후보 통합 + 중복 제거
       const candidates = [...new Set([...variations, ...googleSuggestions])]
         .map(kw => kw.trim())
         .filter(kw => kw.length >= 3 && kw.length <= 50)
+        // 비용/보험 키워드 필터링 (진료 정보만 수집)
+        .filter(kw => !isBlockedKeyword(kw))
         // 치과 관련 아닌 것 필터링
         .filter(kw => {
           const irrelevant = /대출|보험사|자동차|부동산|주식|코인|다이어트|성형외과|피부과|한의원|약국|병원비|의료분쟁/

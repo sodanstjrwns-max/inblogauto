@@ -4,7 +4,7 @@ import type { Bindings } from '../index'
 const contentRoutes = new Hono<{ Bindings: Bindings }>()
 
 // ===== 콘텐츠 유형 자동 분류 (환자 중심 v2) =====
-type ContentType = 'A' | 'B' | 'C' | 'D' | 'E'
+type ContentType = 'B' | 'C' | 'D' | 'E' | 'F'
 
 function classifyContentType(keyword: string, searchIntent: string): { type: ContentType; label: string; question: string; emotion: string } {
   const kw = keyword.toLowerCase()
@@ -24,6 +24,11 @@ function classifyContentType(keyword: string, searchIntent: string): { type: Con
     return { type: 'D', label: '비교/선택', question: `${keyword} — 뭘 골라야 하는지 모르겠고, 잘못 선택할까 봐 걱정된다`, emotion: '혼란·우유부단' }
   }
 
+  // 유형 F — 적응증/필요성 (이 치료가 나에게 필요한지 판단하고 싶은 상태)
+  if (/필요|해야|안하면|적응증|대상|누가|언제|어떤.*경우|꼭|반드시|시기|나이|조건/.test(kw)) {
+    return { type: 'F', label: '적응증/필요성', question: `${keyword} — 나한테 정말 필요한 치료인지 판단하고 싶다`, emotion: '의구심·판단 불안' }
+  }
+
   // 유형 B — 시술 과정/방법 (기본 — 모르는 것에 대한 막연한 두려움)
   return { type: 'B', label: '시술 과정/방법', question: `${keyword}이(가) 어떻게 진행되는지 몰라서 막연히 무섭다`, emotion: '막연한 두려움' }
 }
@@ -31,15 +36,6 @@ function classifyContentType(keyword: string, searchIntent: string): { type: Con
 // ===== 유형별 구조 가이드 (환자 공감 v2) =====
 function getTypeGuide(type: ContentType): string {
   const guides: Record<ContentType, string> = {
-    'A': `## 유형 A — 비용/가격 정보 구조 (환자 공감형)
-1. 첫 단락: "이 치료를 앞두고 비용이 걱정되는 마음, 당연합니다"로 공감 → 평균 가격 범위 바로 제시
-2. H2: 이 치료가 왜 필요한지 (비용 전에 가치 이해)
-3. H2: 가격 차이가 나는 이유 (재료, 기술, 난이도) — 비싸다고 좋은 것은 아니다
-4. H2: 건강보험/실손 적용 여부와 조건
-5. H2: "비용 때문에 치료를 미루면 어떻게 되나?" (미루는 것의 리스크)
-6. FAQ 5개+
-핵심: "비용이 부담되는 마음을 인정"하되, 가격을 숨기지 않고 바로 제시한다.`,
-
     'B': `## 유형 B — 시술 과정/방법 구조 (환자 공감형)
 1. 첫 단락: "처음 받는 치료라 어떻게 진행되는지 모르면 더 무섭게 느껴집니다"로 감정 인정 → 이 글이 그 막연함을 없애줄 것이라 약속
 2. H2: "이 치료는 왜 하는 건가요?" (내가 왜 이걸 받아야 하는지 납득)
@@ -79,7 +75,17 @@ function getTypeGuide(type: ContentType): string {
 6. H2: "치료를 미루면 오히려 이런 일이 생깁니다" — 방치의 결과를 현실적으로 (겁주기가 아니라 정보 제공)
 7. H2: "치과 공포가 심한 분을 위한 실질적 팁" — 진정 치료, 의료진에게 말하는 법, 호흡법 등
 8. FAQ 5~7개
-핵심: 두려움을 부정하지 않고, 구체적 정보로 "모르는 것의 공포"를 "아는 것의 안심"으로 바꾼다.`
+핵심: 두려움을 부정하지 않고, 구체적 정보로 "모르는 것의 공포"를 "아는 것의 안심"으로 바꾼다.`,
+
+    'F': `## 유형 F — 적응증/필요성 구조 (환자 공감형)
+1. 첫 단락: "이 치료가 정말 나에게 필요한 건지, 의심이 드는 건 자연스럽습니다"로 공감 → 핵심 적응증 요약
+2. H2: "이런 증상이 있다면, 이 치료가 필요합니다" — 구체적 적응증 리스트 (체크리스트 형태)
+3. H2: "반대로, 이런 경우는 이 치료가 아닙니다" — 비적응증도 명확히 (환자가 불필요한 치료를 피하도록)
+4. H2: "치료를 미루면 어떤 일이 생기나요?" — 방치 시 진행 과정을 단계별로 (겁주기가 아니라 현실적 정보)
+5. H2: "치과에서 어떤 검사를 받게 되나요?" — 진단 과정 설명 (X-ray, CT, 치주 검사 등)
+6. H2: "치료 시기는 언제가 좋은가요?" — 최적 시기와 연령별 고려사항
+7. FAQ 5~7개
+핵심: 환자가 "내가 이 치료의 대상인지 아닌지"를 스스로 판단할 수 있는 기준을 준다. 불필요한 치료 유도는 절대 금지.`
   }
   return guides[type]
 }
@@ -370,7 +376,7 @@ async function generateWithClaude(
   const userPrompt = `다음 키워드로 환자 공감형 치과 정보 블로그 포스트를 작성해주세요.
 
 키워드: ${keyword}
-콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
+콘텐츠 유형: ${contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : contentType === 'E' ? '불안/공포 해소' : '적응증/필요성'}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 이 글을 검색하게 된 마음: ${patientQuestion}
 ${region ? `지역: ${region}
@@ -382,7 +388,7 @@ ${region ? `지역: ${region}
 
 핵심 방향:
 - 환자의 불안과 걱정을 먼저 인정하고, 구체적 정보로 해소하세요
-- 비용이나 가격 정보보다 실제 치료 과정, 방법, 통증, 회복에 집중하세요
+- 비용/가격/보험 정보는 절대 다루지 마세요. 오직 치료 과정, 적응증, 부작용, 회복, 증상에만 집중하세요
 - 환자가 읽고 나서 "아, 이 정도면 괜찮겠다"라고 느낄 수 있어야 합니다
 - "치과에서 이렇게 질문해보세요" 같은 환자 임파워먼트 문장을 포함하세요
 
@@ -558,6 +564,17 @@ function calculateSeoScore(content: any, keyword: string): number {
   if (foundComparison.length > 0) {
     medLawScore -= 4
     violations.push(`타병원 비교: ${foundComparison.slice(0, 2).join(', ')}`)
+  }
+
+  // 비용/보험 정보 포함 시 강력 감점
+  const costPatterns = [
+    '만원', '만 원', '가격대', '비용은', '보험 적용', '실비', '급여', '비급여',
+    '건강보험', '할부', '할인', '이벤트', '무료 상담', '무료 검진'
+  ]
+  const foundCost = costPatterns.filter(p => plainText.includes(p))
+  if (foundCost.length > 0) {
+    medLawScore -= Math.min(15, foundCost.length * 5)
+    violations.push(`비용/보험 정보 포함 (금지): ${foundCost.slice(0, 3).join(', ')}`)
   }
 
   score += Math.max(0, medLawScore)

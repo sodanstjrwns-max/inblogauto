@@ -34,10 +34,10 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
   return { region, index: currentIndex }
 }
 
-// ===== 콘텐츠 유형 로테이션 (균등 배분) =====
-const CONTENT_TYPE_ROTATION: Array<'A' | 'B' | 'C' | 'D' | 'E'> = ['B', 'C', 'A', 'E', 'D']
+// ===== 콘텐츠 유형 로테이션 (균등 배분 - 비용/가격 제외) =====
+const CONTENT_TYPE_ROTATION: Array<'B' | 'C' | 'D' | 'E' | 'F'> = ['B', 'C', 'E', 'D', 'F', 'B', 'E', 'C', 'F', 'B']
 
-async function getNextContentType(db: D1Database): Promise<{ type: 'A' | 'B' | 'C' | 'D' | 'E'; index: number }> {
+async function getNextContentType(db: D1Database): Promise<{ type: 'B' | 'C' | 'D' | 'E' | 'F'; index: number }> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = 'content_type_rotation_index'").first()
   let currentIndex = parseInt(row?.value as string || '0')
   if (isNaN(currentIndex) || currentIndex >= CONTENT_TYPE_ROTATION.length) currentIndex = 0
@@ -157,20 +157,24 @@ cronApp.post('/', async (c) => {
   const totalWeight = Object.values(categoryWeights).reduce((s: number, v: any) => s + (v as number), 0)
   const keywords: any[] = []
 
+  // 비용/보험 키워드 필터 (진료 정보만 발행)
+  const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)/
+  
   for (const [cat, weight] of Object.entries(categoryWeights)) {
     const catCount = Math.max(0, Math.round(count * ((weight as number) / (totalWeight as number))))
     if (catCount === 0) continue
 
-    // 우선: 아직 콘텐츠가 없는 키워드
+    // 우선: 아직 콘텐츠가 없는 키워드 (비용/보험 키워드 제외)
     const results = await c.env.DB.prepare(
       `SELECT * FROM keywords 
        WHERE is_active = 1 AND category = ?
        ORDER BY used_count ASC, priority DESC, RANDOM()
        LIMIT ?`
-    ).bind(cat, catCount * 3).all() // 3배로 가져와서 필터링
+    ).bind(cat, catCount * 5).all() // 5배로 가져와서 비용/보험 필터링 후 선별
     
-    const filtered = (results.results || []).filter((k: any) => !usedKeywordIds.has(k.id))
-    const fallback = (results.results || []).filter((k: any) => usedKeywordIds.has(k.id))
+    const allResults = (results.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword))
+    const filtered = allResults.filter((k: any) => !usedKeywordIds.has(k.id))
+    const fallback = allResults.filter((k: any) => usedKeywordIds.has(k.id))
     // 미사용 키워드 우선, 부족하면 기사용 키워드도 허용
     keywords.push(...filtered.slice(0, catCount), ...fallback.slice(0, Math.max(0, catCount - filtered.length)))
   }
@@ -183,10 +187,11 @@ cronApp.post('/', async (c) => {
        WHERE is_active = 1 AND id NOT IN (${excludeIds})
        ORDER BY used_count ASC, priority DESC, RANDOM()
        LIMIT ?`
-    ).bind(count - keywords.length).all()
-    // 여기서도 미사용 우선
-    const extraFiltered = (extra.results || []).filter((k: any) => !usedKeywordIds.has(k.id))
-    const extraFallback = (extra.results || []).filter((k: any) => usedKeywordIds.has(k.id))
+    ).bind((count - keywords.length) * 3).all()
+    // 비용/보험 키워드 제외 + 미사용 우선
+    const extraAll = (extra.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword))
+    const extraFiltered = extraAll.filter((k: any) => !usedKeywordIds.has(k.id))
+    const extraFallback = extraAll.filter((k: any) => usedKeywordIds.has(k.id))
     keywords.push(...extraFiltered, ...extraFallback)
   }
 
