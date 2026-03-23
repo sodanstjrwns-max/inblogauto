@@ -52,16 +52,19 @@ app.get('/api/image/:id/:type', async (c) => {
     
     const mimeType = (image.mime_type as string) || 'image/jpeg'
     let imageData = image.image_data
+    const cacheHeaders = { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
     
-    // image_data가 ArrayBuffer/Uint8Array인 경우 (진짜 BLOB)
-    if (imageData instanceof ArrayBuffer || imageData instanceof Uint8Array) {
-      const bytes = imageData instanceof ArrayBuffer ? new Uint8Array(imageData) : imageData
-      return new Response(bytes, {
-        headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
-      })
+    // Case 1: ArrayBuffer (D1 BLOB → Workers에서 ArrayBuffer로 반환)
+    if (imageData instanceof ArrayBuffer) {
+      return new Response(new Uint8Array(imageData), { headers: cacheHeaders })
     }
     
-    // image_data가 string인 경우 — Base64 텍스트로 저장됨
+    // Case 2: Uint8Array
+    if (imageData instanceof Uint8Array) {
+      return new Response(imageData, { headers: cacheHeaders })
+    }
+    
+    // Case 3: string — Base64 텍스트로 저장된 경우
     if (typeof imageData === 'string') {
       // data URI prefix 제거 (만약 있으면)
       const base64Str = imageData.replace(/^data:[^;]+;base64,/, '')
@@ -73,12 +76,19 @@ app.get('/api/image/:id/:type', async (c) => {
         bytes[i] = binaryString.charCodeAt(i)
       }
       
-      return new Response(bytes, {
-        headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
-      })
+      return new Response(bytes, { headers: cacheHeaders })
     }
     
-    return c.json({ error: 'Unknown image data format' }, 500)
+    // Case 4: 기타 — 가능한 한 바이너리로 처리 시도
+    // D1이 blob을 반환할 때 object 형태일 수 있음 (예: {buffer: ...})
+    try {
+      const fallbackBytes = new Uint8Array(imageData as any)
+      if (fallbackBytes.length > 0) {
+        return new Response(fallbackBytes, { headers: cacheHeaders })
+      }
+    } catch (_) {}
+    
+    return c.json({ error: 'Unknown image data format', type: typeof imageData, constructor: imageData?.constructor?.name }, 500)
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
   }
