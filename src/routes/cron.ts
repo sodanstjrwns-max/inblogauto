@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Bindings } from '../index'
 import { classifyContentType, getTypeGuide, buildSystemPrompt, calculateSeoScore } from './contents'
-import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost } from './publish'
+import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost, getAuthorId } from './publish'
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
 
@@ -194,7 +194,10 @@ cronApp.post('/', async (c) => {
           const syncedTags = await syncTags(inblogApiKey, bestContent.tags || [])
           const tagIds = syncedTags.map((t: any) => t.id)
 
-          // Inblog에 포스트 생성
+          // 작성자 ID 가져오기 ("대표원장 문석준")
+          const authorId = await getAuthorId(inblogApiKey)
+
+          // Inblog에 포스트 생성 — 작성자 포함
           const createResult = await createInblogPost(inblogApiKey, {
             title: bestContent.title,
             slug: bestContent.slug,
@@ -202,7 +205,7 @@ cronApp.post('/', async (c) => {
             content_html: finalHtml,
             meta_description: bestContent.meta_description,
             image: thumbnailUrl
-          }, tagIds)
+          }, tagIds, authorId)
 
           inblogPostId = createResult.id
 

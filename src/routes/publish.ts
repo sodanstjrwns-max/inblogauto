@@ -59,6 +59,43 @@ async function verifyInblogApiKey(apiKey: string): Promise<InblogApiKeyInfo> {
   }
 }
 
+// ===== GET /authors — 작성자 목록 조회 =====
+async function listInblogAuthors(apiKey: string): Promise<{ id: string; name: string }[]> {
+  const response = await fetch(`${INBLOG_BASE}/authors`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Accept': 'application/vnd.api+json'
+    }
+  })
+
+  if (!response.ok) return []
+
+  const data: any = await response.json()
+  const items = data?.data || []
+
+  return items.map((item: any) => ({
+    id: String(item.id),
+    name: item.attributes?.author_name || ''
+  }))
+}
+
+// ===== 작성자 ID 가져오기 ("대표원장 문석준" 우선, 없으면 첫번째 작성자) =====
+async function getAuthorId(apiKey: string): Promise<string | null> {
+  try {
+    const authors = await listInblogAuthors(apiKey)
+    if (!authors.length) return null
+    
+    // "대표원장 문석준" 또는 "문석준" 이름으로 매칭
+    const target = authors.find(a => 
+      a.name.includes('문석준') || a.name.includes('대표원장')
+    )
+    return target ? target.id : authors[0].id
+  } catch {
+    return null
+  }
+}
+
 // ===== GET /tags — 기존 태그 목록 조회 =====
 async function listInblogTags(apiKey: string): Promise<InblogTagResult[]> {
   const response = await fetch(`${INBLOG_BASE}/tags`, {
@@ -176,9 +213,10 @@ async function createInblogPost(
     meta_description: string
     image?: string
   },
-  tagIds?: string[]
+  tagIds?: string[],
+  authorId?: string | null
 ): Promise<InblogPostResult> {
-  // Build relationships (tags)
+  // Build relationships (tags + authors)
   const relationships: any = {}
   if (tagIds && tagIds.length) {
     relationships.tags = {
@@ -206,7 +244,14 @@ async function createInblogPost(
     requestBody.data.attributes.image = post.image
   }
 
-  // Relationships (tags)
+  // Author relationship
+  if (authorId) {
+    relationships.authors = {
+      data: [{ type: 'authors', id: String(authorId) }]
+    }
+  }
+
+  // Relationships (tags + authors)
   if (Object.keys(relationships).length) {
     requestBody.data.relationships = relationships
   }
@@ -344,7 +389,10 @@ publishRoutes.post('/:contentId', async (c) => {
     const syncedTags = await syncTags(inblogApiKey, contentTags)
     const tagIds = syncedTags.map(t => t.id)
 
-    // 6. 포스트 생성 (draft)
+    // 6. 작성자 ID 가져오기 ("대표원장 문석준")
+    const authorId = await getAuthorId(inblogApiKey)
+
+    // 7. 포스트 생성 (draft) — 작성자 포함
     const createResult = await createInblogPost(inblogApiKey, {
       title: content.title,
       slug: content.slug,
@@ -352,19 +400,19 @@ publishRoutes.post('/:contentId', async (c) => {
       content_html: content.content_html,
       meta_description: content.meta_description,
       image: content.thumbnail_url || undefined
-    }, tagIds)
+    }, tagIds, authorId)
 
     const inblogPostId = createResult.id
     const inblogUrl = `https://${apiInfo.subdomain}.inblog.ai/${content.slug}`
 
-    // 7. 즉시 발행 or 예약 발행
+    // 8. 즉시 발행 or 예약 발행
     if (scheduleAt) {
       await publishInblogPost(inblogApiKey, inblogPostId, 'schedule', scheduleAt)
     } else {
       await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
     }
 
-    // 8. 성공 — DB 업데이트
+    // 9. 성공 — DB 업데이트
     await c.env.DB.prepare(
       `UPDATE publish_logs SET status = 'published', inblog_post_id = ?, inblog_url = ?, published_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`
     ).bind(inblogPostId, inblogUrl, logId).run()
@@ -423,6 +471,9 @@ publishRoutes.post('/retry/:logId', async (c) => {
     // 슬러그 중복 방지 — 재시도 시 타임스탬프 추가
     const retrySlug = content.slug + '-' + Date.now().toString(36)
 
+    // 작성자 ID 가져오기
+    const authorId = await getAuthorId(inblogApiKey)
+
     const createResult = await createInblogPost(inblogApiKey, {
       title: content.title,
       slug: retrySlug,
@@ -430,7 +481,7 @@ publishRoutes.post('/retry/:logId', async (c) => {
       content_html: content.content_html,
       meta_description: content.meta_description,
       image: content.thumbnail_url || undefined
-    }, tagIds)
+    }, tagIds, authorId)
 
     await publishInblogPost(inblogApiKey, createResult.id, 'publish')
 
@@ -478,5 +529,6 @@ export {
   verifyInblogApiKey,
   syncTags,
   createInblogPost,
-  publishInblogPost
+  publishInblogPost,
+  getAuthorId
 }
