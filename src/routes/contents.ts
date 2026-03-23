@@ -575,7 +575,7 @@ function calculateSeoScore(content: any, keyword: string): number {
 
 // ===== 썸네일 생성 (실제 AI 이미지 생성) =====
 async function generateThumbnail(keyword: string, title: string, env?: any): Promise<{ url: string; prompt: string }> {
-  const prompt = `Clean professional dental medical infographic illustration about "${keyword}". Modern minimalist flat design, soft blue (#e8f4fd) and white color palette, medical icons, no text overlay, no human faces, suitable for medical blog OG image thumbnail 1200x630.`
+  const prompt = `Clean modern dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, minimalist flat design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, professional healthcare aesthetic, suitable for medical blog OG image thumbnail 1200x630.`
   
   // 폴백용 플레이스홀더
   const placeholderUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(keyword)}&font=sans-serif`

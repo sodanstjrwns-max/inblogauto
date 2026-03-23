@@ -148,7 +148,7 @@ cronApp.post('/', async (c) => {
         thumbnailUrl = thumbResult.url
         
         const infoResult = await generateAIImage(
-          c.env, kw.keyword, kw.category || 'general', 'infographic', classified.type, contentId
+          c.env, kw.keyword, kw.category || 'general', 'illustration', classified.type, contentId
         )
         infoImageUrl = infoResult.url
         infoCaption = infoResult.caption
@@ -324,45 +324,41 @@ const cronHandler = cronApp
 // ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
 
 // 콘텐츠 유형별 이미지 프롬프트 템플릿
-function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'infographic', contentType: string): string {
-  const baseStyle = 'Clean modern medical illustration, flat design style, soft pastel colors with light blue (#e8f4fd) and white palette, minimalist, no text, no human faces, no logos, professional healthcare aesthetic'
+function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string): string {
+  const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
+  const baseStyle = `Clean modern medical illustration, soft pastel colors, light blue and white palette, minimalist flat design, ${noText}, no human faces, no logos, professional healthcare aesthetic`
   
   // 카테고리별 핵심 시각 요소
   const categoryVisuals: Record<string, string> = {
-    implant: 'dental implant cross-section, jaw bone structure, titanium screw, crown',
-    orthodontics: 'teeth alignment, braces, clear aligners, smile transformation stages',
-    general: 'healthy tooth, dental tools, oral care items, dental mirror',
-    prevention: 'toothbrush, dental floss, fluoride, protective shield around tooth',
-    local: 'dental clinic building, reception area, modern dental chair',
+    implant: 'dental implant cross-section diagram, jaw bone structure, titanium screw and crown, gum tissue',
+    orthodontics: 'teeth with clear aligners, beautiful smile, orthodontic treatment concept',
+    general: 'healthy white tooth, dental mirror, clean oral care scene',
+    prevention: 'toothbrush and toothpaste, dental floss, protective shield around tooth',
+    local: 'modern dental clinic interior, comfortable dental chair, welcoming atmosphere',
   }
   
   // 콘텐츠 유형별 분위기
   const typeMood: Record<string, string> = {
-    B: 'step-by-step process diagram, numbered stages, procedure flow, arrows showing progression',
-    C: 'recovery timeline, healing process, care checklist icons, gentle soothing colors',
-    D: 'side-by-side comparison layout, split view, versus design, balanced composition',
-    E: 'calming reassuring atmosphere, gentle hand holding, comfort symbols, warm soft lighting, peaceful',
+    A: 'clean simple composition, trustworthy professional feeling',
+    B: 'gentle procedural scene, calming medical environment, dental tools arranged neatly',
+    C: 'soothing recovery atmosphere, gentle warm colors, peaceful healing vibe',
+    D: 'balanced symmetrical composition, clean comparison visual',
+    E: 'calming reassuring atmosphere, warm soft lighting, peaceful comforting scene',
   }
   
   const visual = categoryVisuals[category] || categoryVisuals.general
   const mood = typeMood[contentType] || typeMood.B
   
   if (purpose === 'thumbnail') {
-    return `${baseStyle}, ${visual}, wide banner composition 16:9 aspect ratio, dental blog thumbnail about "${keyword}", ${mood}`
+    return `${baseStyle}, ${visual}, centered composition, simple clean background, blog hero image, ${mood}`
   } else {
-    return `${baseStyle}, ${visual}, infographic layout, detailed ${mood}, medical educational illustration about "${keyword}"`
+    return `${baseStyle}, ${visual}, ${mood}, detailed realistic medical illustration, soft shadows, clean white background`
   }
 }
 
 // 이미지 캡션 생성
 function getImageCaption(contentType: string, keyword: string): string {
-  const captions: Record<string, string> = {
-    B: `▲ ${keyword} 시술 과정 일러스트`,
-    C: `▲ ${keyword} 회복 관리 가이드`,
-    D: `▲ ${keyword} 비교 참고 이미지`,
-    E: `▲ ${keyword} 안내 이미지`,
-  }
-  return captions[contentType] || `▲ ${keyword} 참고 이미지`
+  return `▲ ${keyword} 관련 이미지`
 }
 
 // 이미지를 D1에 Base64 TEXT로 저장하고 자체 URL 반환
@@ -381,11 +377,11 @@ async function saveImageToD1(
 
 // 메인 이미지 생성 함수
 async function generateAIImage(
-  env: any, keyword: string, category: string, purpose: 'thumbnail' | 'infographic', contentType: string,
+  env: any, keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string,
   contentId?: number
 ): Promise<{ url: string; caption: string }> {
   const prompt = buildImagePrompt(keyword, category, purpose, contentType)
-  const caption = purpose === 'infographic' ? getImageCaption(contentType, keyword) : ''
+  const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
   
   // 방법 1: Cloudflare Workers AI (바인딩 사용)
   if (env?.AI) {
