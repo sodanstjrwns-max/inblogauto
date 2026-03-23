@@ -121,40 +121,62 @@ cronApp.post('/', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
-      // 이미지 — Unsplash 고품질 치과/의료 이미지 (항상 안정적)
-      const thumbImg = getDentalImage(kw.category || 'general', 'thumbnail')
-      const infoImg = getDentalImage(kw.category || 'general', 'infographic', classified.type)
-      const thumbnailUrl = thumbImg.url
-      const infoImageUrl = infoImg.url
-
-      // 콘텐츠 HTML에 인포그래픽(본문 중간) + 썸네일(상단) 삽입
+      // === 1단계: 콘텐츠를 먼저 DB에 저장 (이미지 없이) ===
       let finalHtml = bestContent.content_html
-
-      // 1) 본문 첫 번째 H2 섹션 뒤에 인포그래픽 삽입
-      const firstH2End = finalHtml.indexOf('</h2>')
-      if (firstH2End !== -1) {
-        const afterFirstH2 = finalHtml.indexOf('<h2', firstH2End + 5)
-        if (afterFirstH2 !== -1) {
-          const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${kw.keyword} 관련 이미지" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">${infoImg.caption}</figcaption></figure>`
-          finalHtml = finalHtml.slice(0, afterFirstH2) + infographicHtml + finalHtml.slice(afterFirstH2)
-        }
-      }
-
-      // 2) 상단 썸네일
-      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
-
-      // DB 저장
+      
       const insertResult = await c.env.DB.prepare(
         `INSERT INTO contents (keyword_id, keyword_text, title, slug, meta_description, content_html, tags, faq_json, thumbnail_url, thumbnail_prompt, seo_score, word_count, generation_attempts, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, 'draft')`
       ).bind(
         kw.id, kw.keyword, bestContent.title, bestContent.slug,
         bestContent.meta_description, finalHtml,
         JSON.stringify(bestContent.tags), JSON.stringify(bestContent.faq),
-        thumbnailUrl, '', bestContent.seo_score, bestContent.word_count, bestContent.attempts
+        bestContent.seo_score, bestContent.word_count, bestContent.attempts
       ).run()
 
-      const contentId = insertResult.meta.last_row_id
+      const contentId = insertResult.meta.last_row_id as number
+
+      // === 2단계: AI 이미지 생성 (contentId로 D1에 저장) ===
+      let thumbnailUrl = ''
+      let infoImageUrl = ''
+      let infoCaption = ''
+      
+      try {
+        const thumbResult = await generateAIImage(
+          c.env, kw.keyword, kw.category || 'general', 'thumbnail', classified.type, contentId
+        )
+        thumbnailUrl = thumbResult.url
+        
+        const infoResult = await generateAIImage(
+          c.env, kw.keyword, kw.category || 'general', 'infographic', classified.type, contentId
+        )
+        infoImageUrl = infoResult.url
+        infoCaption = infoResult.caption
+      } catch (imgErr: any) {
+        console.error('이미지 생성 실패, 폴백 사용:', imgErr.message)
+        thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
+        infoImageUrl = thumbnailUrl
+        infoCaption = '▲ 참고 이미지'
+      }
+
+      // === 3단계: 이미지 URL을 HTML에 삽입하고 DB 업데이트 ===
+      // 본문 첫 번째 H2 섹션 뒤에 인포그래픽 삽입
+      const firstH2End = finalHtml.indexOf('</h2>')
+      if (firstH2End !== -1) {
+        const afterFirstH2 = finalHtml.indexOf('<h2', firstH2End + 5)
+        if (afterFirstH2 !== -1) {
+          const infographicHtml = `<figure style="margin:32px 0;text-align:center"><img src="${infoImageUrl}" alt="${kw.keyword} 관련 이미지" style="width:100%;max-width:800px;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08)" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:10px">${infoCaption}</figcaption></figure>`
+          finalHtml = finalHtml.slice(0, afterFirstH2) + infographicHtml + finalHtml.slice(afterFirstH2)
+        }
+      }
+
+      // 상단 썸네일
+      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
+
+      // DB 업데이트 (이미지 URL 포함된 최종 HTML)
+      await c.env.DB.prepare(
+        `UPDATE contents SET content_html = ?, thumbnail_url = ? WHERE id = ?`
+      ).bind(finalHtml, thumbnailUrl, contentId).run()
 
       // 키워드 사용횟수 업데이트
       await c.env.DB.prepare(
@@ -299,126 +321,119 @@ ${region ? '참고 지역: ' + region : ''}
 
 const cronHandler = cronApp
 
-// ===== Unsplash 치과/의료 이미지 풀 (항상 안정적, 고품질) =====
-function getDentalImage(category: string, purpose: 'thumbnail' | 'infographic', contentType?: string): { url: string; caption: string } {
-  // 카테고리별 + 용도별 Unsplash 이미지 (모두 검증된 URL)
-  const images: Record<string, { thumb: string[]; info: Record<string, string[]> }> = {
-    implant: {
-      thumb: [
-        'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
-      ],
-      info: {
-        B: [
-          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
-        ],
-        C: [
-          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
-        ],
-        D: [
-          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
-        ],
-      }
-    },
-    orthodontics: {
-      thumb: [
-        'https://images.unsplash.com/photo-1606811971618-4486d14f3f99?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1570612861542-284f4c12e75f?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1598256989800-fe5f95da9787?w=1200&h=630&fit=crop&q=80',
-      ],
-      info: {
-        B: [
-          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=800&fit=crop&q=80',
-        ],
-        C: [
-          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
-        ],
-        D: [
-          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
-        ],
-      }
-    },
-    general: {
-      thumb: [
-        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1606811841689-23dfddce3e95?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
-      ],
-      info: {
-        B: [
-          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
-        ],
-        C: [
-          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
-        ],
-        D: [
-          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
-          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
-        ],
-      }
-    },
-    prevention: {
-      thumb: [
-        'https://images.unsplash.com/photo-1606811971618-4486d14f3f99?w=1200&h=630&fit=crop&q=80',
-        'https://images.unsplash.com/photo-1609840114035-3c981b782dfe?w=1200&h=630&fit=crop&q=80',
-      ],
-      info: {
-        B: [
-          'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?w=1200&h=800&fit=crop&q=80',
-        ],
-        C: [
-          'https://images.unsplash.com/photo-1612349317150-e413f6a5b16d?w=1200&h=800&fit=crop&q=80',
-        ],
-        D: [
-          'https://images.unsplash.com/photo-1571772996211-2f02c9727629?w=1200&h=800&fit=crop&q=80',
-        ],
-      }
-    },
-    local: {
-      thumb: [
-        'https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1200&h=630&fit=crop&q=80',
-      ],
-      info: {
-        B: [
-          'https://images.unsplash.com/photo-1579684385127-1ef15d508118?w=1200&h=800&fit=crop&q=80',
-        ],
-        C: [
-          'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=1200&h=800&fit=crop&q=80',
-        ],
-        D: [
-          'https://images.unsplash.com/photo-1607613009820-a29f7bb81c04?w=1200&h=800&fit=crop&q=80',
-        ],
-      }
-    }
+// ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
+
+// 콘텐츠 유형별 이미지 프롬프트 템플릿
+function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'infographic', contentType: string): string {
+  const baseStyle = 'Clean modern medical illustration, flat design style, soft pastel colors with light blue (#e8f4fd) and white palette, minimalist, no text, no human faces, no logos, professional healthcare aesthetic'
+  
+  // 카테고리별 핵심 시각 요소
+  const categoryVisuals: Record<string, string> = {
+    implant: 'dental implant cross-section, jaw bone structure, titanium screw, crown',
+    orthodontics: 'teeth alignment, braces, clear aligners, smile transformation stages',
+    general: 'healthy tooth, dental tools, oral care items, dental mirror',
+    prevention: 'toothbrush, dental floss, fluoride, protective shield around tooth',
+    local: 'dental clinic building, reception area, modern dental chair',
   }
-
-  const pool = images[category] || images.general
-  const now = Date.now()
-
+  
+  // 콘텐츠 유형별 분위기
+  const typeMood: Record<string, string> = {
+    B: 'step-by-step process diagram, numbered stages, procedure flow, arrows showing progression',
+    C: 'recovery timeline, healing process, care checklist icons, gentle soothing colors',
+    D: 'side-by-side comparison layout, split view, versus design, balanced composition',
+    E: 'calming reassuring atmosphere, gentle hand holding, comfort symbols, warm soft lighting, peaceful',
+  }
+  
+  const visual = categoryVisuals[category] || categoryVisuals.general
+  const mood = typeMood[contentType] || typeMood.B
+  
   if (purpose === 'thumbnail') {
-    const idx = now % pool.thumb.length
-    return { url: pool.thumb[idx], caption: '' }
+    return `${baseStyle}, ${visual}, wide banner composition 16:9 aspect ratio, dental blog thumbnail about "${keyword}", ${mood}`
   } else {
-    const type = contentType || 'B'
-    const infoPool = pool.info[type] || pool.info.B
-    const idx = (now + 3) % infoPool.length
-    const captions: Record<string, string> = {
-      B: '▲ 시술 과정 참고 이미지',
-      C: '▲ 회복 관리 참고 이미지',
-      D: '▲ 치료 옵션 비교 참고 이미지',
-    }
-    return { url: infoPool[idx], caption: captions[type] || '▲ 참고 이미지' }
+    return `${baseStyle}, ${visual}, infographic layout, detailed ${mood}, medical educational illustration about "${keyword}"`
   }
+}
+
+// 이미지 캡션 생성
+function getImageCaption(contentType: string, keyword: string): string {
+  const captions: Record<string, string> = {
+    B: `▲ ${keyword} 시술 과정 일러스트`,
+    C: `▲ ${keyword} 회복 관리 가이드`,
+    D: `▲ ${keyword} 비교 참고 이미지`,
+    E: `▲ ${keyword} 안내 이미지`,
+  }
+  return captions[contentType] || `▲ ${keyword} 참고 이미지`
+}
+
+// 이미지를 D1에 Base64 TEXT로 저장하고 자체 URL 반환
+async function saveImageToD1(
+  env: any, contentId: number, keyword: string, imageType: string, prompt: string, base64Data: string
+): Promise<string> {
+  // Base64 문자열을 TEXT로 저장 (D1 BLOB 호환성 문제 회피)
+  await env.DB.prepare(
+    `INSERT OR REPLACE INTO generated_images (content_id, keyword, image_type, prompt, image_data, mime_type)
+     VALUES (?, ?, ?, ?, ?, 'image/jpeg')`
+  ).bind(contentId, keyword, imageType, prompt, base64Data).run()
+  
+  // 자체 서빙 URL 반환
+  return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
+}
+
+// 메인 이미지 생성 함수
+async function generateAIImage(
+  env: any, keyword: string, category: string, purpose: 'thumbnail' | 'infographic', contentType: string,
+  contentId?: number
+): Promise<{ url: string; caption: string }> {
+  const prompt = buildImagePrompt(keyword, category, purpose, contentType)
+  const caption = purpose === 'infographic' ? getImageCaption(contentType, keyword) : ''
+  
+  // 방법 1: Cloudflare Workers AI (바인딩 사용)
+  if (env?.AI) {
+    try {
+      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+        prompt: prompt,
+        num_steps: 4,
+      })
+      
+      // flux-1-schnell은 { image: Base64String } 형태로 반환
+      const raw = aiResult?.image ?? aiResult
+      
+      if (raw && typeof raw === 'string' && raw.length > 1000) {
+        console.log(`[이미지] Workers AI 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
+        
+        // contentId가 있으면 D1에 Base64 문자열로 저장하고 자체 URL 반환
+        if (contentId) {
+          const url = await saveImageToD1(env, contentId, keyword, purpose, prompt, raw)
+          return { url, caption }
+        }
+        
+        // contentId 없으면 data URI로 반환
+        return { url: `data:image/jpeg;base64,${raw}`, caption }
+      }
+    } catch (aiErr: any) {
+      console.error('Workers AI 이미지 생성 실패:', aiErr.message)
+    }
+  }
+  
+  // 방법 2: 플레이스홀더 폴백 (키워드 기반 고유 이미지)
+  // 매 키워드마다 다른 색상+텍스트로 최소한의 차별화
+  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
+  const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
+  const bg = colors[colorIdx]
+  const fallbackUrl = `https://placehold.co/1200x630/${bg}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
+  console.log(`[이미지] 폴백 사용: ${keyword} (${purpose})`)
+  return { url: fallbackUrl, caption }
+}
+
+// 문자열 해시 (시드 생성용)
+function hashString(str: string): number {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash |= 0
+  }
+  return hash
 }
 
 export { cronHandler }

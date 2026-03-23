@@ -35,6 +35,38 @@ app.route('/api/cron/generate', cronHandler)
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
+// 이미지 서빙 API — D1에 저장된 AI 생성 이미지를 바이너리로 서빙
+app.get('/api/image/:id/:type', async (c) => {
+  try {
+    const contentId = c.req.param('id')
+    const imageType = c.req.param('type').replace(/\.(png|jpg|jpeg)$/i, '')
+    
+    // D1 BLOB을 쿼리에서 hex()로 변환하여 TEXT로 읽기 — ReadableStream 문제 회피
+    const image: any = await c.env.DB.prepare(
+      'SELECT hex(image_data) as image_hex, mime_type FROM generated_images WHERE content_id = ? AND image_type = ? LIMIT 1'
+    ).bind(contentId, imageType).first()
+    
+    if (!image || !image.image_hex) {
+      return c.json({ error: 'Image not found', contentId, imageType }, 404)
+    }
+    
+    const mimeType = (image.mime_type as string) || 'image/jpeg'
+    const hex = image.image_hex as string
+    
+    // hex 문자열 → Uint8Array
+    const bytes = new Uint8Array(hex.length / 2)
+    for (let i = 0; i < hex.length; i += 2) {
+      bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16)
+    }
+    
+    return new Response(bytes, {
+      headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
+    })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
 // SPA - serve index.html for all non-API routes
 app.get('*', (c) => {
   return c.html(getIndexHtml())
