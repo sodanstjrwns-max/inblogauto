@@ -5,6 +5,33 @@ import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost, getA
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
 
+// ===== 충청권 도시 로테이션 =====
+const CHUNGCHEONG_CITIES = [
+  '대전', '세종', '청주', '천안', '아산',
+  '서산', '당진', '논산', '공주', '보령',
+  '제천', '충주', '홍성', '예산', '음성',
+  '진천', '괴산', '옥천', '영동', '금산'
+]
+
+// DB에서 마지막으로 사용한 도시 인덱스를 가져와 다음 도시 반환
+async function getNextRegion(db: D1Database): Promise<{ region: string; index: number }> {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'region_rotation_index'").first()
+  let currentIndex = parseInt(row?.value as string || '0')
+  if (isNaN(currentIndex) || currentIndex >= CHUNGCHEONG_CITIES.length) currentIndex = 0
+  
+  const region = CHUNGCHEONG_CITIES[currentIndex]
+  const nextIndex = (currentIndex + 1) % CHUNGCHEONG_CITIES.length
+  
+  // 다음 인덱스 저장
+  if (row) {
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'region_rotation_index'").bind(String(nextIndex)).run()
+  } else {
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES ('region_rotation_index', ?, '충청권 도시 로테이션 인덱스')").bind(String(nextIndex)).run()
+  }
+  
+  return { region, index: currentIndex }
+}
+
 // POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
 cronApp.post('/', async (c) => {
   try {
@@ -41,7 +68,7 @@ cronApp.post('/', async (c) => {
   const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
 
   const disclaimer = disclaimerRow?.value as string || '본 글은 일반적인 의료 정보를 제공하기 위한 목적으로 작성되었습니다. 개인의 구강 상태에 따라 진단과 치료 방법이 달라질 수 있으므로, 정확한 진단과 치료 계획은 반드시 치과의사와 상담하시기 바랍니다.'
-  const region = regionRow?.value as string || ''
+  const regionSetting = regionRow?.value as string || '' // settings에서 고정 지역 (비어있으면 로테이션 사용)
   const minScore = parseInt(minScoreRow?.value as string || '80')
   const shouldAutoPublish = autoPublishOverride !== undefined
     ? autoPublishOverride
@@ -96,6 +123,12 @@ cronApp.post('/', async (c) => {
       // 콘텐츠 유형 자동 분류
       const classified = classifyContentType(kw.keyword, kw.search_intent || 'info')
       const typeGuide = getTypeGuide(classified.type)
+
+      // 충청권 도시 로테이션 — 매 콘텐츠마다 다른 도시
+      const regionInfo = regionSetting 
+        ? { region: regionSetting, index: -1 }  // settings에 고정 지역이 있으면 그걸 사용
+        : await getNextRegion(c.env.DB)          // 없으면 충청권 로테이션
+      const region = regionInfo.region
 
       // Claude API 호출 (최대 3회 시도)
       let bestContent: any = null
@@ -244,6 +277,7 @@ cronApp.post('/', async (c) => {
         seo_score: bestContent.seo_score,
         content_type: classified.type,
         content_type_label: classified.label,
+        region: region,
         status: publishStatus,
         inblog_url: inblogUrl || null,
         inblog_post_id: inblogPostId || null,
@@ -278,7 +312,11 @@ async function callClaude(
 콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 검색하게 된 마음: ${patientQuestion}
-${region ? '참고 지역: ' + region : ''}
+${region ? `지역: ${region}
+- 본문 중 1~2곳에 "${region} 지역", "${region}에서" 등 자연스럽게 지역명 언급
+- 제목이나 메타 디스크립션에도 "${region}" 포함 권장
+- slug에 지역 영문명 포함 (예: daejeon, cheongju, sejong 등)
+- 지역 주민이 읽는다고 생각하고, 해당 지역 환자가 공감할 수 있는 표현 사용` : ''}
 연도: 2026년
 
 핵심 방향:

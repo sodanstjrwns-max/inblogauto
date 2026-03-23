@@ -249,8 +249,24 @@ contentRoutes.post('/generate', async (c) => {
 
   const claudeApiKey = claudeKeyRow?.value as string || c.env.CLAUDE_API_KEY || ''
   const disclaimer = disclaimerRow?.value as string || '본 글은 일반적인 의료 정보를 제공하기 위한 목적으로 작성되었습니다. 개인의 구강 상태에 따라 진단과 치료 방법이 달라질 수 있으므로, 정확한 진단과 치료 계획은 반드시 치과의사와 상담하시기 바랍니다.'
-  const region = regionRow?.value as string || ''
+  const regionSetting = regionRow?.value as string || ''
   const minScore = parseInt(minScoreRow?.value as string || '80')
+
+  // 충청권 도시 로테이션
+  let region = regionSetting
+  if (!region) {
+    const CITIES = ['대전','세종','청주','천안','아산','서산','당진','논산','공주','보령','제천','충주','홍성','예산','음성','진천','괴산','옥천','영동','금산']
+    const rotRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'region_rotation_index'").first()
+    let idx = parseInt(rotRow?.value as string || '0')
+    if (isNaN(idx) || idx >= CITIES.length) idx = 0
+    region = CITIES[idx]
+    const nextIdx = (idx + 1) % CITIES.length
+    if (rotRow) {
+      await c.env.DB.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'region_rotation_index'").bind(String(nextIdx)).run()
+    } else {
+      await c.env.DB.prepare("INSERT INTO settings (key, value, description) VALUES ('region_rotation_index', ?, '충청권 도시 로테이션 인덱스')").bind(String(nextIdx)).run()
+    }
+  }
 
   if (!claudeApiKey) {
     return c.json({ error: 'Claude API 키가 설정되지 않았습니다. 설정 페이지에서 입력해주세요.' }, 400)
@@ -355,7 +371,11 @@ async function generateWithClaude(
 콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 이 글을 검색하게 된 마음: ${patientQuestion}
-${region ? `참고 지역: ${region}` : ''}
+${region ? `지역: ${region}
+- 본문 중 1~2곳에 "${region} 지역", "${region}에서" 등 자연스럽게 지역명 언급
+- 제목이나 메타 디스크립션에도 "${region}" 포함 권장
+- slug에 지역 영문명 포함 (예: daejeon, cheongju, sejong 등)
+- 지역 주민이 읽는다고 생각하고, 해당 지역 환자가 공감할 수 있는 표현 사용` : ''}
 연도: 2026년
 
 핵심 방향:
