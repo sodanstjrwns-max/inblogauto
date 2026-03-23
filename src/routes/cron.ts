@@ -77,29 +77,25 @@ cronApp.post('/', async (c) => {
   const requestedCount = (body as any).count || 0
   const isManual = (body as any).manual || false
   const autoPublishOverride = (body as any).auto_publish // true/false 직접 지정
-  const cronSlot = (body as any).cron_slot || 0 // 0=전체, 1=아침, 2=점심, 3=저녁
 
   // 스케줄 설정
   const schedule: any = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
   const postsPerDay = schedule?.posts_per_day || 5
   
-  // 타임아웃 대응: Cron 슬롯별 건수 분배 (총 3슬롯으로 분산)
-  // 수동이면 요청 건수, Cron이면 슬롯별 균등 분배 (예: 5건/일 → 2+2+1)
+  // ===== 새벽 한방 발행 전략 =====
+  // Cloudflare Cron Trigger가 새벽(KST 02:00~05:30)에 5번 호출
+  // 각 호출 시 1건씩 생성+발행 → Workers 타임아웃 걱정 없음
+  // 수동 호출 시에는 지정 건수 사용
   let count: number
   if (requestedCount > 0) {
     count = requestedCount // 수동: 지정 건수
-  } else if (cronSlot > 0) {
-    // 슬롯별 분배: 1슬롯=ceil(n/3), 2슬롯=ceil((n-slot1)/2), 3슬롯=나머지
-    const slot1 = Math.ceil(postsPerDay / 3)
-    const slot2 = Math.ceil((postsPerDay - slot1) / 2)
-    const slot3 = postsPerDay - slot1 - slot2
-    count = cronSlot === 1 ? slot1 : cronSlot === 2 ? slot2 : slot3
+  } else if (!isManual) {
+    // Cron 자동 호출: 항상 1건씩 (타임아웃 안전)
+    // 하루 총 발행 수는 cron 호출 횟수(5회)로 제어
+    count = 1
   } else {
-    count = postsPerDay // 슬롯 미지정: 전체
+    count = postsPerDay // 슬롯 미지정 수동: 전체
   }
-  
-  // Workers 타임아웃 안전장치: 한번에 최대 2건 (수동은 제한 없음)
-  if (!isManual && count > 2) count = 2
   const categoryWeights = JSON.parse(schedule?.category_weights || '{"implant":30,"orthodontics":25,"general":25,"prevention":15,"local":5}')
 
   // 자동 발행 설정 확인

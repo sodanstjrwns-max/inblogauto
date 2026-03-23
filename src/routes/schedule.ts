@@ -9,7 +9,7 @@ scheduleRoutes.get('/', async (c) => {
 
   if (!schedule) {
     await c.env.DB.prepare(
-      `INSERT INTO schedules (name, posts_per_day, publish_times, category_weights) VALUES ('default', 3, '["07:00","12:00","18:00"]', '{"implant":30,"orthodontics":20,"general":25,"prevention":15,"local":10}')`
+      `INSERT INTO schedules (name, posts_per_day, publish_times, category_weights) VALUES ('default', 5, '["02:00","03:00","04:00","05:00","05:30"]', '{"implant":30,"orthodontics":25,"general":25,"prevention":15,"local":5}')`
     ).run()
     schedule = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
   }

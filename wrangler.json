@@ -19,5 +19,14 @@
       "binding": "R2",
       "bucket_name": "inblog-autopublish-images"
     }
-  ]
+  ],
+  "triggers": {
+    "crons": [
+      "0 17 * * *",
+      "0 18 * * *",
+      "0 19 * * *",
+      "0 20 * * *",
+      "30 20 * * *"
+    ]
+  }
 }

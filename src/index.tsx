@@ -674,14 +674,14 @@ function getIndexHtml(): string {
                 <select id="sch-count" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" onchange="updateSchedulePreview()">
                   <option value="1" \${data.posts_per_day==1?'selected':''}>1건/일</option>
                   <option value="2" \${data.posts_per_day==2?'selected':''}>2건/일</option>
-                  <option value="3" \${data.posts_per_day==3?'selected':''}>3건/일 (권장)</option>
-                  <option value="5" \${data.posts_per_day==5?'selected':''}>5건/일</option>
+                  <option value="3" \${data.posts_per_day==3?'selected':''}>3건/일</option>
+                  <option value="5" \${data.posts_per_day==5?'selected':''}>5건/일 (권장)</option>
                 </select>
               </div>
               <div>
                 <label class="text-sm font-medium text-gray-700 mb-2 block">발행 시간대</label>
                 <div id="sch-times" class="space-y-2">
-                  \${(data.publish_times||['07:00','12:00','18:00']).map((t,i) => \`
+                  \${(data.publish_times||['02:00','03:00','04:00','05:00','05:30']).map((t,i) => \`
                     <div class="flex items-center gap-2">
                       <span class="text-xs text-gray-400 w-6">\${i+1}.</span>
                       <input type="time" value="\${t}" class="sch-time border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1">
@@ -1721,30 +1721,35 @@ function getIndexHtml(): string {
 export default app
 
 // ===== Cloudflare Cron Trigger Handler =====
-// wrangler.jsonc에서 [triggers] crons = ["50 21 * * *"] (UTC 21:50 = KST 06:50)
-// Cloudflare Pages Functions에서는 scheduled 이벤트를 이렇게 처리
+// 새벽 한방 발행: 5개 Cron이 KST 02:00~05:30에 1건씩 실행
+// UTC 17:00 = KST 02:00, UTC 18:00 = KST 03:00, ..., UTC 20:30 = KST 05:30
+// → 오전 6시 전에 5건 발행 완료!
+//
+// wrangler.json triggers.crons:
+//   "0 17 * * *"  → KST 02:00 (1번째)
+//   "0 18 * * *"  → KST 03:00 (2번째)
+//   "0 19 * * *"  → KST 04:00 (3번째)
+//   "0 20 * * *"  → KST 05:00 (4번째)
+//   "30 20 * * *" → KST 05:30 (5번째)
 export const onRequest = app.fetch
 
 export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
-  // Cron 실행 시 KST 시간대 기준으로 슬롯 결정
-  // 07:00 (UTC 22:00) → slot 1, 12:00 (UTC 03:00) → slot 2, 18:00 (UTC 09:00) → slot 3
   const kstHour = (new Date().getUTCHours() + 9) % 24
-  let cronSlot = 1 // 기본 아침
-  if (kstHour >= 10 && kstHour < 15) cronSlot = 2 // 점심
-  else if (kstHour >= 15) cronSlot = 3 // 저녁
+  const kstMin = new Date().getUTCMinutes()
+  console.log(`[Cron] 새벽 자동 발행 시작 (KST ${kstHour}:${String(kstMin).padStart(2, '0')})`)
 
   const url = 'http://localhost/api/cron/generate'
   const request = new Request(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ count: 0, manual: false, auto_publish: true, cron_slot: cronSlot })
+    body: JSON.stringify({ count: 1, manual: false, auto_publish: true })
   })
 
   try {
     const response = await app.fetch(request, env, ctx)
     const result = await response.json() as any
-    console.log(`[Cron slot ${cronSlot}] 자동 발행 완료: ${result.message || JSON.stringify(result)}`)
+    console.log(`[Cron KST ${kstHour}:${String(kstMin).padStart(2, '0')}] 발행 완료: ${result.message || JSON.stringify(result)}`)
   } catch (e: any) {
-    console.error(`[Cron slot ${cronSlot}] 자동 발행 실패:`, e.message)
+    console.error(`[Cron KST ${kstHour}:${String(kstMin).padStart(2, '0')}] 발행 실패:`, e.message)
   }
 }
