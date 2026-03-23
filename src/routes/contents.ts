@@ -670,7 +670,7 @@ function calculateSeoScore(content: any, keyword: string): number {
   return Math.min(100, Math.max(0, score))
 }
 
-// ===== 썸네일 생성 (고급 AI 이미지 생성) =====
+// ===== 썸네일 생성 (고급 AI 이미지 생성 — fal.ai 우선) =====
 async function generateThumbnail(keyword: string, title: string, env?: any): Promise<{ url: string; prompt: string }> {
   const prompt = `High quality photorealistic 3D dental medical illustration about "${keyword}". Soft pastel colors, light blue and white palette, clean modern design, absolutely no text no letters no words no numbers anywhere in the image, no human faces, no logos, professional healthcare aesthetic, studio lighting, suitable for medical blog OG image thumbnail 1200x630.`
   
@@ -678,7 +678,39 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
   const placeholderUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(keyword)}&font=sans-serif`
 
   try {
-    // 방법 1: Pollinations AI turbo 모델 (고품질, 무료)
+    // 방법 1: fal.ai FLUX (유료, 안정적, 고품질)
+    let falApiKey = ''
+    try {
+      const falKeyRow = await env?.DB?.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
+      falApiKey = falKeyRow?.value as string || ''
+    } catch (e) {}
+    
+    if (falApiKey) {
+      const falResponse = await fetch('https://fal.run/fal-ai/flux/schnell', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Key ${falApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          prompt: prompt,
+          image_size: { width: 1200, height: 630 },
+          num_images: 1,
+          enable_safety_checker: false
+        })
+      })
+      
+      if (falResponse.ok) {
+        const falData: any = await falResponse.json()
+        const imageUrl = falData?.images?.[0]?.url
+        if (imageUrl) {
+          console.log(`[썸네일] fal.ai FLUX 성공: ${keyword}`)
+          return { url: imageUrl, prompt }
+        }
+      }
+    }
+    
+    // 방법 2: Pollinations AI turbo (무료 폴백)
     const seed = Math.abs(Date.now() % 999999)
     const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=turbo&nologo=true&seed=${seed}`
@@ -687,31 +719,6 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
     
     if (checkResponse.ok || checkResponse.status === 302 || checkResponse.status === 301) {
       return { url: pollinationsUrl, prompt }
-    }
-    
-    // 방법 1.5: zimage 모델 폴백
-    const zimageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=zimage&nologo=true&seed=${seed}`
-    const zimageCheck = await fetch(zimageUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(20000) })
-    if (zimageCheck.ok || zimageCheck.status === 302 || zimageCheck.status === 301) {
-      return { url: zimageUrl, prompt }
-    }
-    
-    // 방법 2: Workers AI 바인딩 사용 (프로덕션에서 AI 바인딩 설정 시)
-    if (env?.AI) {
-      try {
-        const aiResult = await env.AI.run('@cf/stabilityai/stable-diffusion-xl-base-1.0', {
-          prompt: prompt,
-          width: 1200,
-          height: 630
-        })
-        if (env?.R2 && aiResult) {
-          const key = `thumbnails/${Date.now()}-${keyword.replace(/\s+/g, '-').substring(0, 30)}.png`
-          await env.R2.put(key, aiResult, { httpMetadata: { contentType: 'image/png' } })
-          return { url: `/${key}`, prompt }
-        }
-      } catch (aiErr) {
-        console.error('Workers AI 썸네일 생성 실패:', aiErr)
-      }
     }
 
     // Pollinations URL을 직접 반환 (GET 시 이미지 생성됨)

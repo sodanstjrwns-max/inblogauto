@@ -633,58 +633,78 @@ async function generateAIImage(
   const prompt = buildImagePrompt(keyword, category, purpose, contentType)
   const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
   
-  // 방법 1: Cloudflare Workers AI (FLUX.2 dev — multipart 형식 필수)
-  if (env?.AI) {
-    // FLUX.2 dev: multipart 형식으로 호출 (고품질)
+  // ===== 방법 1: fal.ai FLUX (유료, 고품질, 안정적) =====
+  // 설정에서 fal.ai API 키 읽기
+  let falApiKey = ''
+  try {
+    const falKeyRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
+    falApiKey = falKeyRow?.value as string || ''
+  } catch (e) {}
+  
+  if (falApiKey) {
     try {
-      // FLUX.2 dev는 multipart 형식이 필요 (Cloudflare Workers AI 문서 기준)
-      const formData = new FormData()
-      formData.append('prompt', prompt)
-      formData.append('num_steps', '20')
-      // @ts-ignore - Workers AI multipart
-      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-2-dev', formData)
-      const raw = (aiResult as any)?.image ?? aiResult
-      
-      if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] FLUX.2 dev 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
-        if (contentId && env?.R2) {
-          try {
-            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
-            console.log(`[이미지] R2 저장 완료: ${savedUrl}`)
-            return { url: savedUrl, caption }
-          } catch (r2Err: any) {
-            console.error('R2 저장 실패:', r2Err.message)
-          }
-        }
-      }
-    } catch (fluxDevErr: any) {
-      console.warn(`FLUX.2 dev 실패 (multipart): ${fluxDevErr.message}`)
-    }
-    
-    // FLUX.2 dev를 JSON 방식으로 다시 시도
-    try {
-      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-2-dev', {
-        prompt: prompt,
-        num_steps: 20,
+      // fal.ai FLUX.1 schnell (빠르고 저렴: ~$0.003/장)
+      const falResponse = await fetch('https://fal.run/fal-ai/flux/schnell', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Key ${falApiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          prompt: prompt,
+          image_size: { width: 1200, height: 630 },
+          num_images: 1,
+          enable_safety_checker: false
+        })
       })
-      const raw = (aiResult as any)?.image ?? aiResult
       
-      if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] FLUX.2 dev (JSON) 생성 성공: ${keyword}, base64 len=${raw.length}`)
-        if (contentId && env?.R2) {
-          try {
-            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
-            return { url: savedUrl, caption }
-          } catch (r2Err: any) {
-            console.error('R2 저장 실패:', r2Err.message)
+      if (falResponse.ok) {
+        const falData: any = await falResponse.json()
+        const imageUrl = falData?.images?.[0]?.url
+        if (imageUrl) {
+          console.log(`[이미지] fal.ai FLUX schnell 성공: ${keyword} (${purpose})`)
+          return { url: imageUrl, caption }
+        }
+      } else {
+        const errText = await falResponse.text()
+        console.warn(`[이미지] fal.ai FLUX schnell 실패 (${falResponse.status}): ${errText.substring(0, 200)}`)
+        
+        // schnell 실패 시 fal.ai FLUX dev 시도 (더 고품질)
+        try {
+          const falDevResponse = await fetch('https://fal.run/fal-ai/flux/dev', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Key ${falApiKey}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              prompt: prompt,
+              image_size: { width: 1200, height: 630 },
+              num_images: 1,
+              num_inference_steps: 28,
+              enable_safety_checker: false
+            })
+          })
+          
+          if (falDevResponse.ok) {
+            const falDevData: any = await falDevResponse.json()
+            const devImageUrl = falDevData?.images?.[0]?.url
+            if (devImageUrl) {
+              console.log(`[이미지] fal.ai FLUX dev 성공: ${keyword} (${purpose})`)
+              return { url: devImageUrl, caption }
+            }
           }
+        } catch (falDevErr: any) {
+          console.warn(`[이미지] fal.ai FLUX dev 실패: ${falDevErr.message}`)
         }
       }
-    } catch (fluxJsonErr: any) {
-      console.warn(`FLUX.2 dev (JSON) 실패: ${fluxJsonErr.message}`)
+    } catch (falErr: any) {
+      console.warn(`[이미지] fal.ai 호출 실패: ${falErr.message}`)
     }
-    
-    // schnell 폴백 (빠르지만 무료 할당량 제한 있음)
+  }
+  
+  // ===== 방법 2: Cloudflare Workers AI (무료 할당량 내에서) =====
+  if (env?.AI) {
     try {
       const aiResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
         prompt: prompt,
@@ -693,7 +713,7 @@ async function generateAIImage(
       const raw = (aiResult as any)?.image ?? aiResult
       
       if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] schnell 생성 성공: ${keyword}, base64 len=${raw.length}`)
+        console.log(`[이미지] Workers AI schnell 성공: ${keyword}, base64 len=${raw.length}`)
         if (contentId && env?.R2) {
           try {
             const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
@@ -704,16 +724,15 @@ async function generateAIImage(
         }
       }
     } catch (schnellErr: any) {
-      console.warn(`schnell 실패: ${schnellErr.message}`)
+      console.warn(`Workers AI schnell 실패: ${schnellErr.message}`)
     }
   }
   
-  // 방법 2: Pollinations AI (고품질 turbo 모델 사용 — URL 기반이라 크기 문제 없음)
+  // ===== 방법 3: Pollinations AI (무료 폴백) =====
   try {
     const seed = Math.abs(hashString(keyword + purpose + contentType))
     const shortPrompt = prompt.substring(0, 200)
     const encodedPrompt = encodeURIComponent(shortPrompt)
-    // turbo 모델: 고품질 이미지 생성 (무료)
     const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true&model=turbo`
     
     const headCheck = await fetch(pollinationsUrl, { method: 'HEAD', signal: AbortSignal.timeout(20000) })
@@ -722,26 +741,10 @@ async function generateAIImage(
       return { url: pollinationsUrl, caption }
     }
   } catch (pollErr: any) {
-    console.error('Pollinations turbo 실패:', pollErr.message)
-  }
-  
-  // 방법 2.5: Pollinations zimage 모델 폴백
-  try {
-    const seed = Math.abs(hashString(keyword + purpose + 'zimage'))
-    const shortPrompt = prompt.substring(0, 200)
-    const encodedPrompt = encodeURIComponent(shortPrompt)
-    const zimageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true&model=zimage`
-    
-    const headCheck = await fetch(zimageUrl, { method: 'HEAD', signal: AbortSignal.timeout(20000) })
-    if (headCheck.ok || headCheck.status === 302 || headCheck.status === 301) {
-      console.log(`[이미지] Pollinations zimage 사용: ${keyword} (${purpose})`)
-      return { url: zimageUrl, caption }
-    }
-  } catch (zimageErr: any) {
-    console.error('Pollinations zimage 실패:', zimageErr.message)
+    console.warn('Pollinations 실패:', pollErr.message)
   }
 
-  // 방법 3: 플레이스홀더 폴백 (최후의 수단)
+  // ===== 방법 4: 플레이스홀더 폴백 (최후의 수단) =====
   const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
   const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
   const bg = colors[colorIdx]

@@ -1593,6 +1593,13 @@ function getIndexHtml(): string {
             </div>
           </div>
           <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-image mr-2 text-green-500"></i>fal.ai \uc774\ubbf8\uc9c0 API <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full ml-2">\uace0\ud488\uc9c8</span></h3>
+            <div class="space-y-4">
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API \ud0a4</label><input id="set-fal-key" type="password" value="\${getValue('fal_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="fal-..."></div>
+              <p class="text-xs text-gray-400">\ud504\ub85c\uae09 AI \uc774\ubbf8\uc9c0 \uc0dd\uc131 (FLUX). ~\u20a921/\uc7a5. <a href="https://fal.ai/dashboard/keys" target="_blank" class="text-primary-500 underline">fal.ai\uc5d0\uc11c \ud0a4 \ubc1c\uae09</a></p>
+            </div>
+          </div>
+          <div class="card p-6">
             <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-hospital mr-2 text-primary-500"></i>\ubcd1\uc6d0 \uc124\uc815</h3>
             <div class="space-y-4">
               <div><label class="text-sm font-medium text-gray-700 mb-1 block">\ubcd1\uc6d0\uba85 <span class="text-xs text-gray-400">(\ub0b4\ubd80 \uad00\ub9ac\uc6a9, \ucf58\ud150\uce20\uc5d0 \ub178\ucd9c \uc548 \ub428)</span></label><input id="set-clinic-name" type="text" value="\${getValue('clinic_name')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" placeholder="OO\uce58\uacfc"></div>
@@ -1645,6 +1652,7 @@ function getIndexHtml(): string {
       const settings = [
         { key: 'inblog_api_key', value: document.getElementById('set-inblog-key').value },
         { key: 'claude_api_key', value: document.getElementById('set-claude-key').value },
+        { key: 'fal_api_key', value: document.getElementById('set-fal-key').value },
         { key: 'clinic_name', value: document.getElementById('set-clinic-name').value },
         { key: 'clinic_region', value: document.getElementById('set-clinic-region').value },
         { key: 'notification_email', value: document.getElementById('set-email').value },
