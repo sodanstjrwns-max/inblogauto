@@ -41,27 +41,44 @@ app.get('/api/image/:id/:type', async (c) => {
     const contentId = c.req.param('id')
     const imageType = c.req.param('type').replace(/\.(png|jpg|jpeg)$/i, '')
     
-    // D1 BLOB을 쿼리에서 hex()로 변환하여 TEXT로 읽기 — ReadableStream 문제 회피
+    // D1에서 image_data를 직접 읽기 (Base64 텍스트로 저장되어 있음)
     const image: any = await c.env.DB.prepare(
-      'SELECT hex(image_data) as image_hex, mime_type FROM generated_images WHERE content_id = ? AND image_type = ? LIMIT 1'
+      'SELECT image_data, mime_type FROM generated_images WHERE content_id = ? AND image_type = ? LIMIT 1'
     ).bind(contentId, imageType).first()
     
-    if (!image || !image.image_hex) {
+    if (!image || !image.image_data) {
       return c.json({ error: 'Image not found', contentId, imageType }, 404)
     }
     
     const mimeType = (image.mime_type as string) || 'image/jpeg'
-    const hex = image.image_hex as string
+    let imageData = image.image_data
     
-    // hex 문자열 → Uint8Array
-    const bytes = new Uint8Array(hex.length / 2)
-    for (let i = 0; i < hex.length; i += 2) {
-      bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16)
+    // image_data가 ArrayBuffer/Uint8Array인 경우 (진짜 BLOB)
+    if (imageData instanceof ArrayBuffer || imageData instanceof Uint8Array) {
+      const bytes = imageData instanceof ArrayBuffer ? new Uint8Array(imageData) : imageData
+      return new Response(bytes, {
+        headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
+      })
     }
     
-    return new Response(bytes, {
-      headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
-    })
+    // image_data가 string인 경우 — Base64 텍스트로 저장됨
+    if (typeof imageData === 'string') {
+      // data URI prefix 제거 (만약 있으면)
+      const base64Str = imageData.replace(/^data:[^;]+;base64,/, '')
+      
+      // Base64 → binary (Web API atob 사용)
+      const binaryString = atob(base64Str)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      
+      return new Response(bytes, {
+        headers: { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
+      })
+    }
+    
+    return c.json({ error: 'Unknown image data format' }, 500)
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
   }
