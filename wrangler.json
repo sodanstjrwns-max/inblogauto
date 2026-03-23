@@ -13,5 +13,11 @@
       "database_name": "inblog-autopublish-db",
       "database_id": "de755705-09d2-46ab-9567-7ecae42f3926"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "inblog-autopublish-images"
+    }
   ]
 }

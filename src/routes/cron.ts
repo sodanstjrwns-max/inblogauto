@@ -32,6 +32,42 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
   return { region, index: currentIndex }
 }
 
+// ===== 콘텐츠 유형 로테이션 (균등 배분) =====
+const CONTENT_TYPE_ROTATION: Array<'A' | 'B' | 'C' | 'D' | 'E'> = ['B', 'C', 'A', 'E', 'D']
+
+async function getNextContentType(db: D1Database): Promise<{ type: 'A' | 'B' | 'C' | 'D' | 'E'; index: number }> {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'content_type_rotation_index'").first()
+  let currentIndex = parseInt(row?.value as string || '0')
+  if (isNaN(currentIndex) || currentIndex >= CONTENT_TYPE_ROTATION.length) currentIndex = 0
+  
+  const type = CONTENT_TYPE_ROTATION[currentIndex]
+  const nextIndex = (currentIndex + 1) % CONTENT_TYPE_ROTATION.length
+  
+  if (row) {
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'content_type_rotation_index'").bind(String(nextIndex)).run()
+  } else {
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES ('content_type_rotation_index', ?, '콘텐츠 유형 로테이션 인덱스')").bind(String(nextIndex)).run()
+  }
+  
+  return { type, index: currentIndex }
+}
+
+// ===== 내부 링크용 기존 발행글 조회 =====
+async function getPublishedPosts(db: D1Database, excludeKeyword?: string): Promise<{ title: string; slug: string; keyword: string; category: string }[]> {
+  const rows = await db.prepare(
+    `SELECT title, slug, keyword_text as keyword, k.category 
+     FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status = 'published' 
+     ORDER BY c.created_at DESC LIMIT 30`
+  ).all()
+  return (rows.results || []).map((r: any) => ({
+    title: r.title,
+    slug: r.slug,
+    keyword: r.keyword,
+    category: r.category || 'general'
+  }))
+}
+
 // POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
 cronApp.post('/', async (c) => {
   try {
@@ -39,10 +75,29 @@ cronApp.post('/', async (c) => {
   const requestedCount = (body as any).count || 0
   const isManual = (body as any).manual || false
   const autoPublishOverride = (body as any).auto_publish // true/false 직접 지정
+  const cronSlot = (body as any).cron_slot || 0 // 0=전체, 1=아침, 2=점심, 3=저녁
 
   // 스케줄 설정
   const schedule: any = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
-  const count = requestedCount || schedule?.posts_per_day || 5
+  const postsPerDay = schedule?.posts_per_day || 5
+  
+  // 타임아웃 대응: Cron 슬롯별 건수 분배 (총 3슬롯으로 분산)
+  // 수동이면 요청 건수, Cron이면 슬롯별 균등 분배 (예: 5건/일 → 2+2+1)
+  let count: number
+  if (requestedCount > 0) {
+    count = requestedCount // 수동: 지정 건수
+  } else if (cronSlot > 0) {
+    // 슬롯별 분배: 1슬롯=ceil(n/3), 2슬롯=ceil((n-slot1)/2), 3슬롯=나머지
+    const slot1 = Math.ceil(postsPerDay / 3)
+    const slot2 = Math.ceil((postsPerDay - slot1) / 2)
+    const slot3 = postsPerDay - slot1 - slot2
+    count = cronSlot === 1 ? slot1 : cronSlot === 2 ? slot2 : slot3
+  } else {
+    count = postsPerDay // 슬롯 미지정: 전체
+  }
+  
+  // Workers 타임아웃 안전장치: 한번에 최대 2건 (수동은 제한 없음)
+  if (!isManual && count > 2) count = 2
   const categoryWeights = JSON.parse(schedule?.category_weights || '{"implant":30,"orthodontics":25,"general":25,"prevention":15,"local":5}')
 
   // 자동 발행 설정 확인
@@ -75,7 +130,13 @@ cronApp.post('/', async (c) => {
     : (autoPublishRow?.value === 'true')
   const inblogApiKey = inblogKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
 
-  // 키워드 자동 선택 (카테고리 가중치 기반)
+  // ===== 중복 키워드 방지: 이미 콘텐츠가 있는 키워드 ID 수집 =====
+  const usedKeywordRows = await c.env.DB.prepare(
+    "SELECT DISTINCT keyword_id FROM contents WHERE keyword_id IS NOT NULL"
+  ).all()
+  const usedKeywordIds = new Set((usedKeywordRows.results || []).map((r: any) => r.keyword_id))
+
+  // 키워드 자동 선택 (카테고리 가중치 기반 + 중복 제외)
   const totalWeight = Object.values(categoryWeights).reduce((s: number, v: any) => s + (v as number), 0)
   const keywords: any[] = []
 
@@ -83,16 +144,21 @@ cronApp.post('/', async (c) => {
     const catCount = Math.max(0, Math.round(count * ((weight as number) / (totalWeight as number))))
     if (catCount === 0) continue
 
+    // 우선: 아직 콘텐츠가 없는 키워드
     const results = await c.env.DB.prepare(
       `SELECT * FROM keywords 
        WHERE is_active = 1 AND category = ?
        ORDER BY used_count ASC, priority DESC, RANDOM()
        LIMIT ?`
-    ).bind(cat, catCount).all()
-    keywords.push(...results.results)
+    ).bind(cat, catCount * 3).all() // 3배로 가져와서 필터링
+    
+    const filtered = (results.results || []).filter((k: any) => !usedKeywordIds.has(k.id))
+    const fallback = (results.results || []).filter((k: any) => usedKeywordIds.has(k.id))
+    // 미사용 키워드 우선, 부족하면 기사용 키워드도 허용
+    keywords.push(...filtered.slice(0, catCount), ...fallback.slice(0, Math.max(0, catCount - filtered.length)))
   }
 
-  // 부족하면 추가
+  // 부족하면 추가 (중복 방지 필터 적용)
   if (keywords.length < count) {
     const excludeIds = keywords.map((k: any) => k.id).join(',') || '0'
     const extra = await c.env.DB.prepare(
@@ -101,7 +167,10 @@ cronApp.post('/', async (c) => {
        ORDER BY used_count ASC, priority DESC, RANDOM()
        LIMIT ?`
     ).bind(count - keywords.length).all()
-    keywords.push(...extra.results)
+    // 여기서도 미사용 우선
+    const extraFiltered = (extra.results || []).filter((k: any) => !usedKeywordIds.has(k.id))
+    const extraFallback = (extra.results || []).filter((k: any) => usedKeywordIds.has(k.id))
+    keywords.push(...extraFiltered, ...extraFallback)
   }
 
   const selectedKeywords = keywords.slice(0, count)
@@ -120,15 +189,26 @@ cronApp.post('/', async (c) => {
   // 각 키워드별 콘텐츠 생성
   for (const kw of selectedKeywords) {
     try {
-      // 콘텐츠 유형 자동 분류
+      // 콘텐츠 유형: 키워드 자동 분류 + 로테이션 강제 배분 (균등화)
       const classified = classifyContentType(kw.keyword, kw.search_intent || 'info')
-      const typeGuide = getTypeGuide(classified.type)
+      const rotatedType = await getNextContentType(c.env.DB)
+      // 키워드가 명확히 특정 유형(E=불안, C=회복)이면 그걸 존중, 아니면 로테이션
+      const finalType = (classified.type === 'E' || classified.type === 'C' || classified.type === 'D') 
+        ? classified.type 
+        : rotatedType.type
+      const typeGuide = getTypeGuide(finalType)
+      // classified 정보도 최종 유형으로 업데이트
+      classified.type = finalType as any
+      classified.label = finalType === 'A' ? '비용/가격 정보' : finalType === 'B' ? '시술 과정/방법' : finalType === 'C' ? '회복/주의사항' : finalType === 'D' ? '비교/선택' : '불안/공포 해소'
 
       // 충청권 도시 로테이션 — 매 콘텐츠마다 다른 도시
       const regionInfo = regionSetting 
         ? { region: regionSetting, index: -1 }  // settings에 고정 지역이 있으면 그걸 사용
         : await getNextRegion(c.env.DB)          // 없으면 충청권 로테이션
       const region = regionInfo.region
+
+      // 내부 링크용 기존 발행글 목록 조회
+      const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
       // Claude API 호출 (최대 3회 시도)
       let bestContent: any = null
@@ -140,7 +220,8 @@ cronApp.post('/', async (c) => {
         try {
           const generated = await callClaude(
             claudeApiKey, kw.keyword, region, disclaimer,
-            classified.type, typeGuide, classified.question, classified.emotion
+            classified.type, typeGuide, classified.question, classified.emotion,
+            existingPosts
           )
           const seoScore = calculateSeoScore(generated, kw.keyword)
 
@@ -301,12 +382,31 @@ cronApp.post('/', async (c) => {
   }
 })
 
-// ===== Claude API 호출 (환자 공감형 v2) =====
+// ===== Claude API 호출 (환자 공감형 v2 + 내부 링크) =====
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
-  contentType: string, typeGuide: string, patientQuestion: string, emotion?: string
+  contentType: string, typeGuide: string, patientQuestion: string, emotion?: string,
+  existingPosts?: { title: string; slug: string; keyword: string; category: string }[]
 ) {
   const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer, emotion)
+
+  // 내부 링크용 기존 글 목록 (관련성 높은 것만 전달)
+  let internalLinksBlock = ''
+  if (existingPosts && existingPosts.length > 0) {
+    const postList = existingPosts.slice(0, 15).map(p => 
+      `- "${p.title}" → https://bdbddc.inblog.ai/${p.slug} (키워드: ${p.keyword})`
+    ).join('\n')
+    internalLinksBlock = `
+## 내부 링크 삽입 (필수 — SEO 핵심)
+아래는 이미 발행된 관련 글 목록입니다. 본문 중 자연스러운 맥락에서 **2~3개**를 선택하여 <a> 태그로 삽입하세요.
+- "관련 글: [제목](URL)" 형태가 아닌, **문맥 속에 자연스럽게** 링크를 녹여야 합니다
+- 예시: "임플란트 수술 후 관리가 궁금하시다면 <a href='URL'>임플란트 수명과 관리법</a>을 참고하세요"
+- 같은 키워드의 글은 제외하고, 관련 치료/연관 정보를 가진 글을 선택하세요
+
+기존 발행 글:
+${postList}
+`
+  }
 
   const userPrompt = `키워드: ${keyword}
 콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
@@ -318,7 +418,7 @@ ${region ? `지역: ${region}
 - slug에 지역 영문명 포함 (예: daejeon, cheongju, sejong 등)
 - 지역 주민이 읽는다고 생각하고, 해당 지역 환자가 공감할 수 있는 표현 사용` : ''}
 연도: 2026년
-
+${internalLinksBlock}
 핵심 방향:
 - 환자의 불안과 걱정을 먼저 인정하고, 구체적 정보로 해소하세요
 - 비용이나 가격 정보보다 실제 치료 과정, 통증, 회복에 집중하세요
@@ -406,17 +506,36 @@ function getImageCaption(contentType: string, keyword: string): string {
   return `▲ ${keyword} 관련 이미지`
 }
 
-// 이미지를 D1에 Base64 TEXT로 저장하고 자체 URL 반환
-async function saveImageToD1(
+// 이미지를 R2 또는 D1에 저장하고 URL 반환
+async function saveImageToStorage(
   env: any, contentId: number, keyword: string, imageType: string, prompt: string, base64Data: string
 ): Promise<string> {
-  // Base64 문자열을 TEXT로 저장 (D1 BLOB 호환성 문제 회피)
+  // 방법 1: R2 스토리지 사용 (우선)
+  if (env?.R2) {
+    try {
+      const binaryString = atob(base64Data)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      const key = `images/${contentId}/${imageType}.jpg`
+      await env.R2.put(key, bytes.buffer, { 
+        httpMetadata: { contentType: 'image/jpeg' },
+        customMetadata: { keyword, prompt: prompt.substring(0, 200) }
+      })
+      // R2 퍼블릭 URL (Cloudflare Pages에서 자동 서빙) — 폴백으로 D1 API 사용
+      return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
+    } catch (r2Err: any) {
+      console.error('R2 저장 실패, D1 폴백:', r2Err.message)
+    }
+  }
+
+  // 방법 2: D1 폴백 (기존 방식)
   await env.DB.prepare(
     `INSERT OR REPLACE INTO generated_images (content_id, keyword, image_type, prompt, image_data, mime_type)
      VALUES (?, ?, ?, ?, ?, 'image/jpeg')`
   ).bind(contentId, keyword, imageType, prompt, base64Data).run()
   
-  // 자체 서빙 URL 반환
   return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
 }
 
@@ -444,7 +563,7 @@ async function generateAIImage(
         
         // contentId가 있으면 D1에 Base64 문자열로 저장하고 자체 URL 반환
         if (contentId) {
-          const url = await saveImageToD1(env, contentId, keyword, purpose, prompt, raw)
+          const url = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
           return { url, caption }
         }
         

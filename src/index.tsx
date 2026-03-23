@@ -7,6 +7,7 @@ import { cronHandler } from './routes/cron'
 import { scheduleRoutes } from './routes/schedule'
 import { settingsRoutes } from './routes/settings'
 import { dashboardRoutes } from './routes/dashboard'
+import { performanceRoutes } from './routes/performance'
 export type Bindings = {
   DB: D1Database
   CLAUDE_API_KEY: string
@@ -28,6 +29,7 @@ app.route('/api/publish', publishRoutes)
 app.route('/api/schedule', scheduleRoutes)
 app.route('/api/settings', settingsRoutes)
 app.route('/api/dashboard', dashboardRoutes)
+app.route('/api/performance', performanceRoutes)
 
 // Cron endpoint (Cloudflare Cron Trigger calls this)
 app.route('/api/cron/generate', cronHandler)
@@ -35,13 +37,25 @@ app.route('/api/cron/generate', cronHandler)
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
-// 이미지 서빙 API — D1에 저장된 AI 생성 이미지를 바이너리로 서빙
+// 이미지 서빙 API — R2 우선, D1 폴백
 app.get('/api/image/:id/:type', async (c) => {
   try {
     const contentId = c.req.param('id')
     const imageType = c.req.param('type').replace(/\.(png|jpg|jpeg)$/i, '')
+    const cacheHeaders = { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=31536000, immutable' }
     
-    // D1에서 image_data를 직접 읽기 (Base64 텍스트로 저장되어 있음)
+    // 방법 1: R2에서 읽기 (우선)
+    if (c.env.R2) {
+      try {
+        const key = `images/${contentId}/${imageType}.jpg`
+        const object = await c.env.R2.get(key)
+        if (object) {
+          return new Response(object.body, { headers: cacheHeaders })
+        }
+      } catch (_) {}
+    }
+    
+    // 방법 2: D1에서 읽기 (폴백)
     const image: any = await c.env.DB.prepare(
       'SELECT image_data, mime_type FROM generated_images WHERE content_id = ? AND image_type = ? LIMIT 1'
     ).bind(contentId, imageType).first()
@@ -52,43 +66,25 @@ app.get('/api/image/:id/:type', async (c) => {
     
     const mimeType = (image.mime_type as string) || 'image/jpeg'
     let imageData = image.image_data
-    const cacheHeaders = { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
+    const headers = { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=31536000, immutable' }
     
-    // Case 1: ArrayBuffer (D1 BLOB → Workers에서 ArrayBuffer로 반환)
     if (imageData instanceof ArrayBuffer) {
-      return new Response(new Uint8Array(imageData), { headers: cacheHeaders })
+      return new Response(new Uint8Array(imageData), { headers })
     }
-    
-    // Case 2: Uint8Array
     if (imageData instanceof Uint8Array) {
-      return new Response(imageData, { headers: cacheHeaders })
+      return new Response(imageData, { headers })
     }
-    
-    // Case 3: string — Base64 텍스트로 저장된 경우
     if (typeof imageData === 'string') {
-      // data URI prefix 제거 (만약 있으면)
       const base64Str = imageData.replace(/^data:[^;]+;base64,/, '')
-      
-      // Base64 → binary (Web API atob 사용)
       const binaryString = atob(base64Str)
       const bytes = new Uint8Array(binaryString.length)
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i)
       }
-      
-      return new Response(bytes, { headers: cacheHeaders })
+      return new Response(bytes, { headers })
     }
     
-    // Case 4: 기타 — 가능한 한 바이너리로 처리 시도
-    // D1이 blob을 반환할 때 object 형태일 수 있음 (예: {buffer: ...})
-    try {
-      const fallbackBytes = new Uint8Array(imageData as any)
-      if (fallbackBytes.length > 0) {
-        return new Response(fallbackBytes, { headers: cacheHeaders })
-      }
-    } catch (_) {}
-    
-    return c.json({ error: 'Unknown image data format', type: typeof imageData, constructor: imageData?.constructor?.name }, 500)
+    return c.json({ error: 'Unknown image data format' }, 500)
   } catch (e: any) {
     return c.json({ error: e.message }, 500)
   }
@@ -175,6 +171,9 @@ function getIndexHtml(): string {
           </a>
           <a href="#" onclick="navigate('history')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="history">
             <i class="fas fa-history w-5 text-center"></i> 발행 이력
+          </a>
+          <a href="#" onclick="navigate('performance')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="performance">
+            <i class="fas fa-chart-bar w-5 text-center"></i> 성과 분석
           </a>
           <a href="#" onclick="navigate('settings')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="settings">
             <i class="fas fa-cog w-5 text-center"></i> 설정
@@ -264,6 +263,7 @@ function getIndexHtml(): string {
         keywords: ['키워드 관리', '치과 키워드 데이터베이스를 관리합니다'],
         schedule: ['스케줄러', '자동 발행 스케줄을 설정합니다'],
         history: ['발행 이력', '콘텐츠 생성 및 발행 이력을 확인합니다'],
+        performance: ['성과 분석', 'SEO 검색 성과를 추적하고 최적화합니다'],
         settings: ['설정', 'API 키 및 사이트 설정을 관리합니다']
       };
       document.getElementById('page-title').textContent = titles[page][0];
@@ -278,6 +278,7 @@ function getIndexHtml(): string {
           case 'keywords': await renderKeywords(); break;
           case 'schedule': await renderSchedule(); break;
           case 'history': await renderHistory(); break;
+          case 'performance': await renderPerformance(); break;
           case 'settings': await renderSettings(); break;
         }
       } catch(e) {
@@ -828,6 +829,180 @@ function getIndexHtml(): string {
       \`;
     }
 
+    // ===== Performance =====
+    async function renderPerformance() {
+      let data;
+      try {
+        data = await api('/performance/overview');
+      } catch(e) {
+        data = { top_performers: [], daily_trend: [], type_performance: [], keyword_performance: [] };
+      }
+      const c = document.getElementById('page-content');
+      const hasData = (data.keyword_performance || []).length > 0;
+      
+      c.innerHTML = \`
+        <div class="card p-6 mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-chart-bar mr-2 text-primary-500"></i>검색 성과 분석</h3>
+            <div class="flex gap-2">
+              <button onclick="showPerfInputModal()" class="bg-primary-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-primary-700">
+                <i class="fas fa-plus mr-1"></i> 성과 입력
+              </button>
+              <button onclick="showBulkPerfModal()" class="bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-300">
+                <i class="fas fa-upload mr-1"></i> GSC 데이터 벌크 입력
+              </button>
+            </div>
+          </div>
+          \${!hasData ? \`
+            <div class="bg-blue-50 text-blue-700 p-4 rounded-lg text-sm">
+              <i class="fas fa-info-circle mr-2"></i>
+              <strong>성과 데이터가 아직 없습니다.</strong><br>
+              Google Search Console에서 데이터를 가져오거나, 위 '성과 입력' 버튼으로 수동 입력할 수 있습니다.<br>
+              콘텐츠 발행 후 2~4주 뒤부터 검색 데이터가 축적됩니다.
+            </div>
+          \` : ''}
+        </div>
+
+        \${hasData ? \`
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-trophy mr-2 text-yellow-500"></i>TOP 키워드 성과</h3>
+            <div class="space-y-2 max-h-80 overflow-y-auto">
+              \${(data.keyword_performance || []).map((k,i) => \`
+                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div class="flex items-center gap-3">
+                    <span class="text-xs font-bold text-gray-400 w-5">\${i+1}</span>
+                    <div>
+                      <p class="text-sm font-medium text-gray-800">\${k.keyword_text}</p>
+                      <p class="text-xs text-gray-400">평균 순위 \${k.avg_position || '-'}위</p>
+                    </div>
+                  </div>
+                  <div class="text-right">
+                    <p class="text-sm font-semibold text-primary-600">\${k.clicks}클릭</p>
+                    <p class="text-xs text-gray-400">\${k.impressions}노출</p>
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+          <div class="card p-5">
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-layer-group mr-2 text-purple-500"></i>콘텐츠 유형별 성과</h3>
+            <div class="space-y-3">
+              \${(data.type_performance || []).map(t => \`
+                <div class="p-3 bg-gray-50 rounded-lg">
+                  <div class="flex justify-between mb-1">
+                    <span class="text-sm font-medium text-gray-700">\${t.content_type}</span>
+                    <span class="text-xs text-gray-400">\${t.cnt}건 · SEO \${t.avg_seo}점</span>
+                  </div>
+                  <div class="flex gap-4 text-xs text-gray-500">
+                    <span>노출 \${t.total_impressions}</span>
+                    <span>클릭 \${t.total_clicks}</span>
+                  </div>
+                </div>
+              \`).join('')}
+            </div>
+          </div>
+        </div>
+        \` : ''}
+
+        <div class="card p-5">
+          <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-list mr-2 text-green-500"></i>전체 콘텐츠 성과</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">제목</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">SEO</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">노출</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">클릭</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">CTR</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">순위</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                \${(data.top_performers || []).map(p => \`
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-3 py-2 text-sm text-gray-800 max-w-xs truncate">\${p.title}</td>
+                    <td class="px-3 py-2 text-center"><span class="text-xs font-medium \${p.seo_score>=90?'text-green-600':'text-yellow-600'}">\${p.seo_score}</span></td>
+                    <td class="px-3 py-2 text-center text-sm text-gray-600">\${p.total_impressions || 0}</td>
+                    <td class="px-3 py-2 text-center text-sm font-medium text-primary-600">\${p.total_clicks || 0}</td>
+                    <td class="px-3 py-2 text-center text-sm text-gray-600">\${p.ctr ? p.ctr.toFixed(1)+'%' : '-'}</td>
+                    <td class="px-3 py-2 text-center text-sm \${p.avg_position<=10?'text-green-600 font-semibold':'text-gray-600'}">\${p.avg_position || '-'}</td>
+                  </tr>
+                \`).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      \`;
+    }
+
+    async function showPerfInputModal() {
+      const contData = await api('/contents?status=published&limit=50');
+      const items = contData.contents || [];
+      const modal = document.getElementById('modal-container');
+      modal.innerHTML = \`
+        <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+            <h3 class="text-lg font-semibold mb-4"><i class="fas fa-chart-line text-primary-500 mr-2"></i>성과 수동 입력</h3>
+            <div class="space-y-3">
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">콘텐츠</label><select id="perf-content" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">\${items.map(i => '<option value="'+i.id+'">'+i.keyword_text+' — '+i.title.substring(0,30)+'</option>').join('')}</select></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">날짜</label><input id="perf-date" type="date" value="\${new Date().toISOString().split('T')[0]}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"></div>
+              <div class="grid grid-cols-3 gap-2">
+                <div><label class="text-xs font-medium text-gray-600 mb-1 block">노출</label><input id="perf-imp" type="number" value="0" class="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"></div>
+                <div><label class="text-xs font-medium text-gray-600 mb-1 block">클릭</label><input id="perf-clicks" type="number" value="0" class="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"></div>
+                <div><label class="text-xs font-medium text-gray-600 mb-1 block">평균순위</label><input id="perf-pos" type="number" step="0.1" value="0" class="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"></div>
+              </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+              <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600">취소</button>
+              <button onclick="savePerfData()" class="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700">저장</button>
+            </div>
+          </div>
+        </div>
+      \`;
+    }
+
+    async function savePerfData() {
+      await api('/performance/log', { method: 'POST', body: JSON.stringify({
+        content_id: parseInt(document.getElementById('perf-content').value),
+        date: document.getElementById('perf-date').value,
+        impressions: parseInt(document.getElementById('perf-imp').value) || 0,
+        clicks: parseInt(document.getElementById('perf-clicks').value) || 0,
+        avg_position: parseFloat(document.getElementById('perf-pos').value) || 0
+      })});
+      closeModal();
+      showToast('성과 데이터가 저장되었습니다');
+      renderPerformance();
+    }
+
+    function showBulkPerfModal() {
+      const modal = document.getElementById('modal-container');
+      modal.innerHTML = \`
+        <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+          <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6">
+            <h3 class="text-lg font-semibold mb-4"><i class="fas fa-upload text-primary-500 mr-2"></i>GSC 데이터 벌크 입력</h3>
+            <p class="text-sm text-gray-500 mb-3">Google Search Console에서 추출한 데이터를 JSON 형식으로 입력하세요.</p>
+            <textarea id="bulk-data" rows="8" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder='[{"slug":"implant-cost-guide","date":"2026-03-20","impressions":150,"clicks":12,"position":8.5}]'></textarea>
+            <div class="flex justify-end gap-2 mt-4">
+              <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600">취소</button>
+              <button onclick="saveBulkPerf()" class="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-primary-700">업로드</button>
+            </div>
+          </div>
+        </div>
+      \`;
+    }
+
+    async function saveBulkPerf() {
+      try {
+        const entries = JSON.parse(document.getElementById('bulk-data').value);
+        const res = await api('/performance/bulk', { method: 'POST', body: JSON.stringify({ entries }) });
+        closeModal();
+        showToast(res.saved + '/' + res.total + '건 저장 완료');
+        renderPerformance();
+      } catch(e) { showToast('JSON 파싱 오류: ' + e.message, 'error'); }
+    }
+
     // ===== Settings =====
     async function renderSettings() {
       const data = await api('/settings');
@@ -975,19 +1150,25 @@ export default app
 export const onRequest = app.fetch
 
 export async function scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
-  // Cron이 실행되면 내부적으로 /api/cron/generate POST를 호출
+  // Cron 실행 시 KST 시간대 기준으로 슬롯 결정
+  // 07:00 (UTC 22:00) → slot 1, 12:00 (UTC 03:00) → slot 2, 18:00 (UTC 09:00) → slot 3
+  const kstHour = (new Date().getUTCHours() + 9) % 24
+  let cronSlot = 1 // 기본 아침
+  if (kstHour >= 10 && kstHour < 15) cronSlot = 2 // 점심
+  else if (kstHour >= 15) cronSlot = 3 // 저녁
+
   const url = 'http://localhost/api/cron/generate'
   const request = new Request(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ count: 0, manual: false, auto_publish: true })
+    body: JSON.stringify({ count: 0, manual: false, auto_publish: true, cron_slot: cronSlot })
   })
 
   try {
     const response = await app.fetch(request, env, ctx)
     const result = await response.json() as any
-    console.log(`[Cron] 자동 발행 완료: ${result.message || JSON.stringify(result)}`)
+    console.log(`[Cron slot ${cronSlot}] 자동 발행 완료: ${result.message || JSON.stringify(result)}`)
   } catch (e: any) {
-    console.error(`[Cron] 자동 발행 실패:`, e.message)
+    console.error(`[Cron slot ${cronSlot}] 자동 발행 실패:`, e.message)
   }
 }
