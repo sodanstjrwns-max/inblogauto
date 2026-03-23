@@ -279,7 +279,7 @@ enhancementRoutes.post('/backfill-links', async (c) => {
           ).bind(r.id).first() as any
           
           if (pubLog?.inblog_post_id && content?.content_html) {
-            const response = await fetch(`https://inblog.ai/api/v1/posts/${pubLog.inblog_post_id}?preserve_external_images=true`, {
+            const response = await fetch(`https://inblog.ai/api/v1/posts/${pubLog.inblog_post_id}`, {
               method: 'PATCH',
               headers: {
                 'Content-Type': 'application/vnd.api+json',
@@ -389,7 +389,7 @@ enhancementRoutes.post('/update-inblog', async (c) => {
   
   for (const target of (targets.results || []) as any[]) {
     try {
-      const response = await fetch(`https://inblog.ai/api/v1/posts/${target.inblog_post_id}?preserve_external_images=true`, {
+      const response = await fetch(`https://inblog.ai/api/v1/posts/${target.inblog_post_id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/vnd.api+json',
@@ -863,7 +863,7 @@ enhancementRoutes.post('/run-all', async (c) => {
         let inblogOk = 0, inblogFail = 0
         for (const t of (targets.results || []) as any[]) {
           try {
-            const r = await fetch(`https://inblog.ai/api/v1/posts/${t.inblog_post_id}?preserve_external_images=true`, {
+            const r = await fetch(`https://inblog.ai/api/v1/posts/${t.inblog_post_id}`, {
               method: 'PATCH',
               headers: { 'Content-Type': 'application/vnd.api+json', 'Authorization': `Bearer ${inblogApiKey}`, 'Accept': 'application/vnd.api+json' },
               body: JSON.stringify({ jsonapi: { version: '1.0' }, data: { type: 'posts', id: t.inblog_post_id, attributes: { content_html: t.content_html } } })

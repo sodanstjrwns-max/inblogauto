@@ -635,13 +635,12 @@ async function generateAIImage(
       if (raw && typeof raw === 'string' && raw.length > 1000) {
         console.log(`[이미지] Workers AI 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
         
-        // contentId가 있으면 D1에 Base64 문자열로 저장하고 자체 URL 반환
+        // R2에도 저장 (자체 서빙용 백업)
         if (contentId) {
-          const url = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
-          return { url, caption }
+          try { await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw) } catch {}
         }
         
-        // contentId 없으면 data URI로 반환
+        // ★ 핵심: data URI로 반환 → Inblog가 자동으로 자기 CDN에 업로드
         return { url: `data:image/jpeg;base64,${raw}`, caption }
       }
     } catch (aiErr: any) {
@@ -649,8 +648,23 @@ async function generateAIImage(
     }
   }
   
-  // 방법 2: 플레이스홀더 폴백 (키워드 기반 고유 이미지)
-  // 매 키워드마다 다른 색상+텍스트로 최소한의 차별화
+  // 방법 2: Pollinations AI (무료 외부 서비스)
+  try {
+    const seed = Math.abs(hashString(keyword + purpose + contentType))
+    const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true`
+    
+    // URL이 유효한지 HEAD 요청으로 확인
+    const headCheck = await fetch(pollinationsUrl, { method: 'HEAD', signal: AbortSignal.timeout(10000) })
+    if (headCheck.ok) {
+      console.log(`[이미지] Pollinations 사용: ${keyword} (${purpose})`)
+      return { url: pollinationsUrl, caption }
+    }
+  } catch (pollErr: any) {
+    console.error('Pollinations 실패:', pollErr.message)
+  }
+
+  // 방법 3: 플레이스홀더 폴백
   const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
   const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
   const bg = colors[colorIdx]

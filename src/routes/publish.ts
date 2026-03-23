@@ -260,7 +260,7 @@ async function createInblogPost(
     requestBody.data.relationships = relationships
   }
 
-  const response = await fetch(`${INBLOG_BASE}/posts?preserve_external_images=true`, {
+  const response = await fetch(`${INBLOG_BASE}/posts`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/vnd.api+json',
