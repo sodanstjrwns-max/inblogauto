@@ -157,8 +157,8 @@ cronApp.post('/', async (c) => {
   const totalWeight = Object.values(categoryWeights).reduce((s: number, v: any) => s + (v as number), 0)
   const keywords: any[] = []
 
-  // 비용/보험 키워드 필터 (진료 정보만 발행)
-  const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)/
+  // 차단 키워드 필터 (비용/보험 + 후기/추천 + 쓰레기 키워드)
+  const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|후기|리뷰|맛집|환절기|황사|알레르기|구내염|마스크\s*구취/
   
   for (const [cat, weight] of Object.entries(categoryWeights)) {
     const catCount = Math.max(0, Math.round(count * ((weight as number) / (totalWeight as number))))
@@ -221,7 +221,7 @@ cronApp.post('/', async (c) => {
       const typeGuide = getTypeGuide(finalType)
       // classified 정보도 최종 유형으로 업데이트
       classified.type = finalType as any
-      classified.label = finalType === 'A' ? '비용/가격 정보' : finalType === 'B' ? '시술 과정/방법' : finalType === 'C' ? '회복/주의사항' : finalType === 'D' ? '비교/선택' : '불안/공포 해소'
+      classified.label = finalType === 'B' ? '시술 과정/방법' : finalType === 'C' ? '회복/주의사항' : finalType === 'D' ? '비교/선택' : finalType === 'E' ? '불안/공포 해소' : '적응증/필요성'
 
       // 충청권 도시 로테이션 — 매 콘텐츠마다 다른 도시
       const regionInfo = regionSetting 
@@ -550,7 +550,7 @@ const cronHandler = cronApp
 // 콘텐츠 유형별 이미지 프롬프트 템플릿
 function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string): string {
   const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
-  const baseStyle = `Clean modern medical illustration, soft pastel colors, light blue and white palette, minimalist flat design, ${noText}, no human faces, no logos, professional healthcare aesthetic`
+  const baseStyle = `High quality photorealistic 3D medical illustration, clean modern design, soft pastel colors with light blue and white palette, ${noText}, no human faces, no logos, professional dental healthcare aesthetic, studio lighting, 8k quality`
   
   // 카테고리별 핵심 시각 요소
   const categoryVisuals: Record<string, string> = {
@@ -563,7 +563,7 @@ function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail
   
   // 콘텐츠 유형별 분위기
   const typeMood: Record<string, string> = {
-    A: 'clean simple composition, trustworthy professional feeling',
+    F: 'thoughtful contemplative atmosphere, warm encouraging feeling, clear visual metaphor',
     B: 'gentle procedural scene, calming medical environment, dental tools arranged neatly',
     C: 'soothing recovery atmosphere, gentle warm colors, peaceful healing vibe',
     D: 'balanced symmetrical composition, clean comparison visual',
@@ -626,19 +626,20 @@ async function generateAIImage(
   const prompt = buildImagePrompt(keyword, category, purpose, contentType)
   const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
   
-  // 방법 1: Cloudflare Workers AI (바인딩 사용)
+  // 방법 1: Cloudflare Workers AI — FLUX.2 [dev] (고급 모델)
   if (env?.AI) {
     try {
-      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-2-dev', {
         prompt: prompt,
-        num_steps: 4,
+        num_steps: 20,
+        guidance: 7.5,
       })
       
-      // flux-1-schnell은 { image: Base64String } 형태로 반환
+      // FLUX.2 dev는 { image: Base64String } 형태로 반환
       const raw = aiResult?.image ?? aiResult
       
       if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] Workers AI 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
+        console.log(`[이미지] FLUX.2 dev 생성 성공: ${keyword} (${purpose}), base64 len=${raw.length}`)
         
         // R2에도 저장 (자체 서빙용 백업)
         if (contentId) {
@@ -649,7 +650,24 @@ async function generateAIImage(
         return { url: `data:image/jpeg;base64,${raw}`, caption }
       }
     } catch (aiErr: any) {
-      console.error('Workers AI 이미지 생성 실패:', aiErr.message)
+      console.error('FLUX.2 dev 이미지 생성 실패, schnell 폴백 시도:', aiErr.message)
+      // FLUX.2 dev 실패 시 schnell 폴백
+      try {
+        const fallbackResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
+          prompt: prompt,
+          num_steps: 4,
+        })
+        const fallbackRaw = fallbackResult?.image ?? fallbackResult
+        if (fallbackRaw && typeof fallbackRaw === 'string' && fallbackRaw.length > 1000) {
+          console.log(`[이미지] schnell 폴백 성공: ${keyword} (${purpose})`)
+          if (contentId) {
+            try { await saveImageToStorage(env, contentId, keyword, purpose, prompt, fallbackRaw) } catch {}
+          }
+          return { url: `data:image/jpeg;base64,${fallbackRaw}`, caption }
+        }
+      } catch (schnellErr: any) {
+        console.error('schnell 폴백도 실패:', schnellErr.message)
+      }
     }
   }
   
