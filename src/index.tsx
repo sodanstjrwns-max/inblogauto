@@ -9,6 +9,7 @@ import { settingsRoutes } from './routes/settings'
 import { dashboardRoutes } from './routes/dashboard'
 import { performanceRoutes } from './routes/performance'
 import { enhancementRoutes } from './routes/enhancements'
+import { keywordDiscoveryRoutes } from './routes/keyword-discovery'
 export type Bindings = {
   DB: D1Database
   CLAUDE_API_KEY: string
@@ -32,6 +33,7 @@ app.route('/api/settings', settingsRoutes)
 app.route('/api/dashboard', dashboardRoutes)
 app.route('/api/performance', performanceRoutes)
 app.route('/api/enhancements', enhancementRoutes)
+app.route('/api/keyword-discovery', keywordDiscoveryRoutes)
 
 // Cron endpoint (Cloudflare Cron Trigger calls this)
 app.route('/api/cron/generate', cronHandler)
@@ -177,6 +179,9 @@ function getIndexHtml(): string {
           <a href="#" onclick="navigate('performance')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="performance">
             <i class="fas fa-chart-bar w-5 text-center"></i> 성과 분석
           </a>
+          <a href="#" onclick="navigate('keyword-discovery')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="keyword-discovery">
+            <i class="fas fa-search-plus w-5 text-center"></i> 키워드 수집
+          </a>
           <a href="#" onclick="navigate('seo-tools')" class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-gray-600" data-page="seo-tools">
             <i class="fas fa-tools w-5 text-center"></i> SEO 도구
           </a>
@@ -269,6 +274,7 @@ function getIndexHtml(): string {
         schedule: ['스케줄러', '자동 발행 스케줄을 설정합니다'],
         history: ['발행 이력', '콘텐츠 생성 및 발행 이력을 확인합니다'],
         performance: ['성과 분석', 'SEO 검색 성과를 추적하고 최적화합니다'],
+        'keyword-discovery': ['키워드 수집', 'AI 키워드 자동 발굴 및 확장'],
         'seo-tools': ['SEO 도구', 'Schema, 내부 링크, 사이트맵 등 SEO 개선 도구'],
         settings: ['설정', 'API 키 및 사이트 설정을 관리합니다']
       };
@@ -285,6 +291,7 @@ function getIndexHtml(): string {
           case 'schedule': await renderSchedule(); break;
           case 'history': await renderHistory(); break;
           case 'performance': await renderPerformance(); break;
+          case 'keyword-discovery': await renderKeywordDiscovery(); break;
           case 'seo-tools': await renderSeoTools(); break;
           case 'settings': await renderSettings(); break;
         }
@@ -1008,6 +1015,269 @@ function getIndexHtml(): string {
         showToast(res.saved + '/' + res.total + '건 저장 완료');
         renderPerformance();
       } catch(e) { showToast('JSON 파싱 오류: ' + e.message, 'error'); }
+    }
+
+    // ===== Keyword Discovery =====
+    async function renderKeywordDiscovery() {
+      let stats = {};
+      try { stats = await api('/keyword-discovery/stats'); } catch {}
+      let suggestions = {};
+      try { suggestions = await api('/keyword-discovery/suggestions'); } catch {}
+      
+      const c = document.getElementById('page-content');
+      c.innerHTML = \`
+        <!-- 통계 카드 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm text-gray-500">전체 키워드</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">\${stats.total_keywords || 0}</p>
+              </div>
+              <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center">
+                <i class="fas fa-database text-blue-500 text-lg"></i>
+              </div>
+            </div>
+          </div>
+          <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm text-gray-500">미사용</p>
+                <p class="text-2xl font-bold text-green-600 mt-1">\${stats.unused_keywords || 0}</p>
+              </div>
+              <div class="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center">
+                <i class="fas fa-leaf text-green-500 text-lg"></i>
+              </div>
+            </div>
+          </div>
+          <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm text-gray-500">잔여 기간</p>
+                <p class="text-2xl font-bold \${(stats.months_remaining||0)<2?'text-red-600':(stats.months_remaining||0)<6?'text-yellow-600':'text-blue-600'} mt-1">\${stats.months_remaining || 0}<span class="text-base font-normal text-gray-400">개월</span></p>
+              </div>
+              <div class="w-12 h-12 bg-yellow-50 rounded-xl flex items-center justify-center">
+                <i class="fas fa-hourglass-half text-yellow-500 text-lg"></i>
+              </div>
+            </div>
+          </div>
+          <div class="card p-5 stat-card">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm text-gray-500">사용률</p>
+                <p class="text-2xl font-bold text-gray-900 mt-1">\${stats.usage_rate || 0}<span class="text-base font-normal text-gray-400">%</span></p>
+              </div>
+              <div class="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center">
+                <i class="fas fa-chart-pie text-purple-500 text-lg"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        \${stats.recommendation ? '<div class="card p-4 mb-6 text-sm">' + stats.recommendation + '</div>' : ''}
+
+        <!-- 카테고리별 현황 -->
+        <div class="card p-5 mb-6">
+          <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-chart-bar mr-2 text-primary-500"></i>카테고리별 현황</h3>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            \${(stats.by_category || []).map(cat => {
+              const names = {general:'일반치료', implant:'임플란트', orthodontics:'교정/미용', prevention:'예방/관리', local:'지역/병원'};
+              const colors = {general:'green', implant:'blue', orthodontics:'purple', prevention:'yellow', local:'red'};
+              return '<div class="bg-'+((colors)[cat.category]||'gray')+'-50 rounded-lg p-3">'
+                +'<p class="text-xs text-gray-500">'+((names)[cat.category]||cat.category)+'</p>'
+                +'<p class="text-lg font-bold text-gray-900">'+cat.total+'<span class="text-xs font-normal text-gray-400 ml-1">/ 미사용 '+cat.unused+'</span></p>'
+                +'<div class="bg-gray-200 rounded-full h-1.5 mt-1"><div class="bg-'+((colors)[cat.category]||'gray')+'-500 h-1.5 rounded-full" style="width:'+(cat.total?Math.round((cat.total-cat.unused)/cat.total*100):0)+'%"></div></div>'
+                +'</div>';
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- 수집 도구 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <!-- 시드 키워드 수집 -->
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-seedling text-green-500 mr-2"></i>시드 키워드로 수집</h3>
+            <p class="text-sm text-gray-500 mb-4">키워드를 입력하면 Google 자동완성 + 치과 도메인 파생어를 수집합니다.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="text-sm font-medium text-gray-700 mb-1 block">시드 키워드 (쉼표로 구분)</label>
+                <input id="disc-seeds" type="text" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary-200 outline-none" placeholder="임플란트, 교정, 사랑니" value="">
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="flex items-center gap-2 text-sm text-gray-600">
+                  <input id="disc-google" type="checkbox" checked class="rounded"> Google 자동완성 포함
+                </label>
+                <label class="flex items-center gap-2 text-sm text-gray-600">
+                  <input id="disc-save" type="checkbox" checked class="rounded"> 자동 DB 저장
+                </label>
+              </div>
+              <div class="flex gap-2">
+                <button onclick="runDiscover()" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 flex-1">
+                  <i class="fas fa-search mr-1"></i> 수집 시작
+                </button>
+              </div>
+            </div>
+            <div id="disc-result" class="mt-3 hidden"></div>
+          </div>
+
+          <!-- 자동 확장 -->
+          <div class="card p-6">
+            <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-expand-arrows-alt text-blue-500 mr-2"></i>기존 키워드에서 자동 확장</h3>
+            <p class="text-sm text-gray-500 mb-4">DB에 있는 고우선순위 키워드를 시드로, 새 파생 키워드를 자동 발굴합니다.</p>
+            <div class="space-y-3">
+              <div>
+                <label class="text-sm font-medium text-gray-700 mb-1 block">시드 수 (기존 키워드 중 상위 N개)</label>
+                <input id="expand-seeds" type="number" value="20" min="5" max="50" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="flex items-center gap-2 text-sm text-gray-600">
+                  <input id="expand-google" type="checkbox" checked class="rounded"> Google 자동완성 포함
+                </label>
+              </div>
+              <button onclick="runAutoExpand()" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 w-full">
+                <i class="fas fa-magic mr-1"></i> 자동 확장 실행
+              </button>
+            </div>
+            <div id="expand-result" class="mt-3 hidden"></div>
+          </div>
+        </div>
+
+        <!-- 추천 시드 키워드 -->
+        <div class="card p-6 mb-6">
+          <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-lightbulb text-yellow-500 mr-2"></i>추천 시드 키워드</h3>
+          <p class="text-sm text-gray-500 mb-3">클릭하면 시드 입력에 자동 추가됩니다.</p>
+          <div class="flex flex-wrap gap-2" id="seed-suggestions">
+            \${(suggestions.recommended_seeds || []).map(s => 
+              '<button onclick="addSeedToInput(this)" class="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full text-xs hover:bg-primary-100 hover:text-primary-700 transition">' + s + '</button>'
+            ).join('')}
+          </div>
+        </div>
+
+        <!-- 수집 이력 / 미사용 TOP -->
+        <div class="card p-6">
+          <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-star text-orange-500 mr-2"></i>미사용 고우선순위 키워드 TOP 20</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left text-xs font-medium text-gray-500">키워드</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">카테고리</th>
+                  <th class="px-3 py-2 text-center text-xs font-medium text-gray-500">우선순위</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-gray-100">
+                \${(suggestions.top_unused_keywords || []).map(kw => {
+                  const cats = {implant:'임플란트', orthodontics:'교정/미용', general:'일반치료', prevention:'예방/관리', local:'지역/병원'};
+                  return '<tr class="hover:bg-gray-50"><td class="px-3 py-2 text-sm text-gray-800">'+kw.keyword+'</td><td class="px-3 py-2 text-center"><span class="badge badge-info">'+((cats)[kw.category]||kw.category)+'</span></td><td class="px-3 py-2 text-center text-sm font-medium '+(kw.priority>=80?'text-green-600':'text-yellow-600')+'">'+kw.priority+'</td></tr>';
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      \`;
+    }
+
+    function addSeedToInput(btn) {
+      const input = document.getElementById('disc-seeds');
+      const current = input.value.trim();
+      const seed = btn.textContent.trim();
+      if (current) {
+        if (!current.split(',').map(s=>s.trim()).includes(seed)) {
+          input.value = current + ', ' + seed;
+        }
+      } else {
+        input.value = seed;
+      }
+      btn.classList.add('bg-primary-100', 'text-primary-700');
+      btn.classList.remove('bg-gray-100', 'text-gray-700');
+    }
+
+    async function runDiscover() {
+      const seedsRaw = document.getElementById('disc-seeds').value;
+      if (!seedsRaw.trim()) return showToast('시드 키워드를 입력하세요', 'warning');
+      
+      const seeds = seedsRaw.split(',').map(s => s.trim()).filter(Boolean);
+      const includeGoogle = document.getElementById('disc-google').checked;
+      const autoSave = document.getElementById('disc-save').checked;
+      
+      const el = document.getElementById('disc-result');
+      el.className = 'mt-3 p-3 bg-blue-50 rounded-lg text-sm';
+      el.innerHTML = '<div class="spinner"></div> Google 자동완성 + 파생어 수집 중... (시드 ' + seeds.length + '개)';
+      
+      try {
+        const res = await api('/keyword-discovery/discover', {
+          method: 'POST',
+          body: JSON.stringify({ seeds, include_google: includeGoogle, auto_save: autoSave })
+        });
+        
+        let html = '<div class="space-y-2">';
+        html += '<p class="font-semibold text-green-700"><i class="fas fa-check-circle mr-1"></i>' + res.message + '</p>';
+        html += '<div class="flex gap-4 text-xs text-gray-500">';
+        html += '<span>Google: ' + (res.by_source?.google || 0) + '개</span>';
+        html += '<span>파생어: ' + (res.by_source?.variation || 0) + '개</span>';
+        html += '</div>';
+        
+        if (res.by_category && Object.keys(res.by_category).length) {
+          html += '<div class="flex flex-wrap gap-2 mt-2">';
+          const catNames = {implant:'임플란트', orthodontics:'교정/미용', general:'일반치료', prevention:'예방/관리', local:'지역/병원'};
+          for (const [cat, cnt] of Object.entries(res.by_category)) {
+            html += '<span class="badge badge-info">' + (catNames[cat]||cat) + ': ' + cnt + '</span>';
+          }
+          html += '</div>';
+        }
+        
+        if (res.keywords && res.keywords.length) {
+          html += '<details class="mt-2"><summary class="cursor-pointer text-xs text-primary-600 font-medium">발견된 키워드 미리보기 (' + Math.min(res.keywords.length, 20) + '/' + res.total_discovered + ')</summary>';
+          html += '<div class="flex flex-wrap gap-1 mt-2 max-h-40 overflow-y-auto">';
+          res.keywords.slice(0, 20).forEach(kw => {
+            html += '<span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">' + kw.keyword + '</span>';
+          });
+          html += '</div></details>';
+        }
+        
+        html += '</div>';
+        el.className = 'mt-3 p-3 bg-green-50 rounded-lg text-sm';
+        el.innerHTML = html;
+        showToast(res.message);
+      } catch(e) {
+        el.className = 'mt-3 p-3 bg-red-50 rounded-lg text-sm text-red-700';
+        el.innerHTML = '<i class="fas fa-times-circle mr-1"></i>' + e.message;
+      }
+    }
+
+    async function runAutoExpand() {
+      const maxSeeds = parseInt(document.getElementById('expand-seeds').value) || 20;
+      const includeGoogle = document.getElementById('expand-google').checked;
+      
+      const el = document.getElementById('expand-result');
+      el.className = 'mt-3 p-3 bg-blue-50 rounded-lg text-sm';
+      el.innerHTML = '<div class="spinner"></div> 기존 키워드에서 자동 확장 중... (시드 ' + maxSeeds + '개)';
+      
+      try {
+        const res = await api('/keyword-discovery/auto-expand', {
+          method: 'POST',
+          body: JSON.stringify({ max_seeds: maxSeeds, include_google: includeGoogle })
+        });
+        
+        let html = '<p class="font-semibold text-green-700"><i class="fas fa-check-circle mr-1"></i>' + res.message + '</p>';
+        html += '<p class="text-xs text-gray-500 mt-1">시드 ' + res.seeds_used + '개 사용</p>';
+        
+        if (res.results && res.results.length) {
+          html += '<details class="mt-2"><summary class="cursor-pointer text-xs text-primary-600 font-medium">상세 결과 (' + res.results.length + '개 시드)</summary>';
+          html += '<div class="space-y-1 mt-2 max-h-40 overflow-y-auto text-xs">';
+          res.results.forEach(r => {
+            html += '<div class="flex justify-between"><span class="text-gray-700">' + r.seed + '</span><span class="text-green-600">+' + r.saved + '개</span></div>';
+          });
+          html += '</div></details>';
+        }
+        
+        el.className = 'mt-3 p-3 bg-green-50 rounded-lg text-sm';
+        el.innerHTML = html;
+        showToast(res.message);
+      } catch(e) {
+        el.className = 'mt-3 p-3 bg-red-50 rounded-lg text-sm text-red-700';
+        el.innerHTML = '<i class="fas fa-times-circle mr-1"></i>' + e.message;
+      }
     }
 
     // ===== SEO Tools Page =====
