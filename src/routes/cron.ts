@@ -3,6 +3,7 @@ import type { Bindings } from '../index'
 import { classifyContentType, getTypeGuide, buildSystemPrompt, calculateSeoScore } from './contents'
 import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost, getAuthorId } from './publish'
 import { injectSchemaToHtml, insertInternalLinks, sendNotification } from './enhancements'
+import { autoReplenishKeywords } from './keyword-discovery'
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
 
@@ -130,6 +131,21 @@ cronApp.post('/', async (c) => {
     ? autoPublishOverride
     : (autoPublishRow?.value === 'true')
   const inblogApiKey = inblogKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
+
+  // ===== 키워드 자동 보충 (매일 Cron 실행 시 잔여량 체크) =====
+  let replenishResult: any = null
+  try {
+    replenishResult = await autoReplenishKeywords(c.env.DB, {
+      postsPerDay: postsPerDay,
+      thresholdDays: 30,  // 30일 미만이면 보충
+      targetDays: 90      // 90일분(450개)까지 채움
+    })
+    if (replenishResult.triggered) {
+      console.log(`[키워드 자동 보충] ${replenishResult.saved}개 추가 (${replenishResult.reason})`)
+    }
+  } catch (e: any) {
+    console.error('[키워드 자동 보충 실패]', e.message)
+  }
 
   // ===== 중복 키워드 방지: 이미 콘텐츠가 있는 키워드 ID 수집 =====
   const usedKeywordRows = await c.env.DB.prepare(
@@ -428,6 +444,11 @@ cronApp.post('/', async (c) => {
   return c.json({
     message: `${successCount}/${count}건 생성, ${publishedCount}건 자동 발행 완료`,
     auto_publish: shouldAutoPublish,
+    keyword_replenish: replenishResult ? {
+      triggered: replenishResult.triggered,
+      saved: replenishResult.saved,
+      reason: replenishResult.reason
+    } : null,
     results
   })
   } catch (outerErr: any) {

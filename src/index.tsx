@@ -1076,6 +1076,38 @@ function getIndexHtml(): string {
 
         \${stats.recommendation ? '<div class="card p-4 mb-6 text-sm">' + stats.recommendation + '</div>' : ''}
 
+        <!-- 자동 보충 시스템 상태 -->
+        <div class="card p-5 mb-6 border-l-4 border-green-500">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-sync-alt mr-2 text-green-500"></i>자동 보충 시스템</h3>
+            <span class="badge badge-success"><i class="fas fa-check mr-1"></i>자동 활성</span>
+          </div>
+          <p class="text-sm text-gray-600 mb-3">매일 Cron 실행 시 키워드 잔여량을 자동 체크합니다. <strong>30일분 미만</strong>이면 <strong>90일분</strong>까지 자동으로 수집합니다.</p>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+            <div class="bg-gray-50 rounded-lg p-3">
+              <p class="text-xs text-gray-500">임계치</p>
+              <p class="font-semibold">\${stats.auto_replenish?.threshold_days || 30}일 미만 시 보충</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3">
+              <p class="text-xs text-gray-500">마지막 자동 보충</p>
+              <p class="font-semibold">\${stats.auto_replenish?.last_run ? dayjs(stats.auto_replenish.last_run).format('MM/DD HH:mm') + ' (+' + stats.auto_replenish.last_count + '개)' : '아직 없음'}</p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3">
+              <p class="text-xs text-gray-500">이번 달 계절 시드</p>
+              <p class="font-semibold">\${stats.auto_replenish?.seasonal_seeds_this_month || 0}개 준비</p>
+            </div>
+          </div>
+          <div class="flex gap-2 mt-3">
+            <button onclick="runForceReplenish()" class="bg-green-600 text-white px-4 py-2 rounded-lg text-xs font-medium hover:bg-green-700">
+              <i class="fas fa-bolt mr-1"></i> 지금 즉시 보충 실행
+            </button>
+            <button onclick="viewSeasonalSeeds()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-xs font-medium hover:bg-gray-300">
+              <i class="fas fa-calendar mr-1"></i> 이번 달 계절 시드 보기
+            </button>
+          </div>
+          <div id="replenish-result" class="mt-3 hidden"></div>
+        </div>
+
         <!-- 카테고리별 현황 -->
         <div class="card p-5 mb-6">
           <h3 class="font-semibold text-gray-900 mb-3"><i class="fas fa-chart-bar mr-2 text-primary-500"></i>카테고리별 현황</h3>
@@ -1278,6 +1310,61 @@ function getIndexHtml(): string {
         el.className = 'mt-3 p-3 bg-red-50 rounded-lg text-sm text-red-700';
         el.innerHTML = '<i class="fas fa-times-circle mr-1"></i>' + e.message;
       }
+    }
+
+    async function runForceReplenish() {
+      const el = document.getElementById('replenish-result');
+      el.className = 'mt-3 p-3 bg-blue-50 rounded-lg text-sm';
+      el.innerHTML = '<div class="spinner"></div> 키워드 자동 보충 실행 중... (계절 시드 + 파생어 + Google)';
+      
+      try {
+        const res = await api('/keyword-discovery/auto-replenish', {
+          method: 'POST',
+          body: JSON.stringify({ force: true })
+        });
+        
+        let html = '<p class="font-semibold text-green-700"><i class="fas fa-check-circle mr-1"></i>';
+        if (res.triggered) {
+          html += res.saved + '개 키워드가 보충되었습니다!</p>';
+          html += '<p class="text-xs text-gray-500 mt-1">' + res.reason + '</p>';
+          if (res.details && res.details.length) {
+            html += '<details class="mt-2"><summary class="cursor-pointer text-xs text-primary-600">상세 (' + res.details.length + '개 시드)</summary>';
+            html += '<div class="space-y-1 mt-1 max-h-32 overflow-y-auto text-xs">';
+            res.details.forEach(function(d) {
+              var icon = d.source === 'seasonal' ? '🌸' : d.source === 'google' ? '🔍' : '🔀';
+              html += '<div class="flex justify-between"><span>' + icon + ' ' + d.seed + '</span><span class="text-green-600">+' + d.saved + '</span></div>';
+            });
+            html += '</div></details>';
+          }
+        } else {
+          html += '보충 불필요 - ' + res.reason + '</p>';
+        }
+        
+        el.className = 'mt-3 p-3 bg-green-50 rounded-lg text-sm';
+        el.innerHTML = html;
+        showToast(res.triggered ? res.saved + '개 키워드 보충!' : '보충 불필요');
+        // 통계 갱신
+        setTimeout(function() { renderKeywordDiscovery(); }, 1000);
+      } catch(e) {
+        el.className = 'mt-3 p-3 bg-red-50 rounded-lg text-sm text-red-700';
+        el.innerHTML = '<i class="fas fa-times-circle mr-1"></i>' + e.message;
+      }
+    }
+
+    async function viewSeasonalSeeds() {
+      try {
+        const res = await api('/keyword-discovery/seasonal');
+        const modal = document.getElementById('modal-container');
+        modal.innerHTML = '<div class="modal-overlay" onclick="if(event.target===this)closeModal()">' +
+          '<div class="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">' +
+          '<h3 class="text-lg font-semibold mb-4"><i class="fas fa-calendar text-green-500 mr-2"></i>' + res.month + '월 계절 시드 키워드 (' + res.count + '개)</h3>' +
+          '<div class="flex flex-wrap gap-2 max-h-64 overflow-y-auto">' +
+          res.seasonal_seeds.map(function(s) { return '<span class="bg-green-50 text-green-700 px-3 py-1.5 rounded-full text-xs">' + s + '</span>'; }).join('') +
+          '</div>' +
+          '<p class="text-xs text-gray-400 mt-4">이 시드를 기반으로 매일 자동 보충이 실행됩니다. 매월 자동 갱신됩니다.</p>' +
+          '<div class="flex justify-end mt-4"><button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600">닫기</button></div>' +
+          '</div></div>';
+      } catch(e) { showToast(e.message, 'error'); }
     }
 
     // ===== SEO Tools Page =====

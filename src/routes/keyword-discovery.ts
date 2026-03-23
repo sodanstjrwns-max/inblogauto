@@ -426,8 +426,248 @@ keywordDiscoveryRoutes.get('/stats', async (c) => {
       ? '⚠️ 키워드가 1개월 미만 남았습니다. 자동 확장을 실행하세요!' 
       : daysRemaining < 90
         ? '📋 3개월 이내 소진 예상. 키워드 보충을 권장합니다.'
-        : `✅ ${Math.round(daysRemaining / 30)}개월분 키워드가 준비되어 있습니다.`
+        : `✅ ${Math.round(daysRemaining / 30)}개월분 키워드가 준비되어 있습니다.`,
+    auto_replenish: {
+      enabled: true,
+      threshold_days: 30,
+      target_days: 90,
+      last_run: (await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'last_keyword_replenish'").first())?.value || null,
+      last_count: parseInt((await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'last_keyword_replenish_count'").first())?.value as string || '0'),
+      seasonal_seeds_this_month: getSeasonalSeeds().length
+    }
   })
 })
 
-export { keywordDiscoveryRoutes, classifyKeyword, fetchGoogleSuggestions, generateDentalVariations }
+// POST /api/keyword-discovery/auto-replenish — 수동으로 자동 보충 트리거
+keywordDiscoveryRoutes.post('/auto-replenish', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const thresholdDays = (body as any).threshold_days || 30
+  const targetDays = (body as any).target_days || 90
+  const postsPerDay = (body as any).posts_per_day || 5
+  const forceRun = (body as any).force || false
+  
+  const result = await autoReplenishKeywords(c.env.DB, {
+    postsPerDay,
+    thresholdDays: forceRun ? 9999 : thresholdDays, // force면 항상 실행
+    targetDays
+  })
+  
+  return c.json(result)
+})
+
+// GET /api/keyword-discovery/seasonal — 이번 달 계절 시드 확인
+keywordDiscoveryRoutes.get('/seasonal', async (c) => {
+  const seeds = getSeasonalSeeds()
+  const month = new Date(Date.now() + 9 * 60 * 60 * 1000).getMonth() + 1
+  return c.json({
+    month,
+    seasonal_seeds: seeds,
+    count: seeds.length
+  })
+})
+
+// ======================================================================
+// 자동 보충 시스템 (Cron에서 호출)
+// ======================================================================
+
+/**
+ * 월/계절별 트렌드 시드 키워드 자동 생성
+ * 치과는 계절, 시기에 따라 검색 트렌드가 확실히 달라짐
+ */
+function getSeasonalSeeds(): string[] {
+  const month = new Date(Date.now() + 9 * 60 * 60 * 1000).getMonth() + 1 // KST 기준 월
+
+  // 공통 상시 시드 (항상 포함)
+  const base = ['치통', '충치', '임플란트', '스케일링']
+
+  // 월별/계절별 트렌드 시드
+  const monthly: Record<number, string[]> = {
+    1: ['새해 치아 관리', '겨울 이 시림', '설날 치과', '연초 치과 검진', '겨울 잇몸 출혈'],
+    2: ['발렌타인 미백', '졸업 치아교정', '봄 치과 검진', '초콜릿 충치', '입학 전 치과'],
+    3: ['봄 스케일링', '입학 치과 검진', '환절기 구내염', '취업 면접 미백', '새학기 교정'],
+    4: ['봄 알레르기 구강건조', '치아의 날', '어린이 불소도포', '황사 구강관리', '소풍 치아 외상'],
+    5: ['어린이날 소아치과', '어버이날 임플란트', '가정의 달 치과', '자외선 입술 관리'],
+    6: ['여름 임플란트', '장마철 치통', '수능 치아교정 시작', '여름방학 교정', '에어컨 구강건조'],
+    7: ['여름방학 사랑니', '빙수 이 시림', '여름 치과 할인', '물놀이 치아 외상', '아이스크림 시린이'],
+    8: ['개학 전 치과 검진', '여름 입냄새', '무더위 잇몸질환', '휴가 후 치과'],
+    9: ['추석 치과 검진', '가을 스케일링', '환절기 구강관리', '수험생 치아관리', '가을 임플란트'],
+    10: ['할로윈 사탕 충치', '가을 미백', '연말 치과 계획', '단풍 시즌 치과', '건강검진 치과'],
+    11: ['수능 후 교정', '연말 임플란트', '블랙프라이데이 치과', '김장철 턱관절', '겨울 대비 치과'],
+    12: ['연말 치아미백', '크리스마스 미백', '송년 스케일링', '겨울방학 교정', '신년 치과 계획']
+  }
+
+  // 시기별 특수 시드
+  const seasonal: string[] = []
+  if (month >= 3 && month <= 5) seasonal.push('봄철 구강관리', '황사 마스크 구취', '알레르기 구강건조증')
+  if (month >= 6 && month <= 8) seasonal.push('여름철 치과', '냉음료 시린이', '수영장 치아 외상')
+  if (month >= 9 && month <= 11) seasonal.push('가을 건강검진 치과', '환절기 잇몸', '수험생 구강관리')
+  if (month === 12 || month <= 2) seasonal.push('겨울 이 시림 원인', '건조한 겨울 구강', '명절 치과 응급')
+
+  return [...base, ...(monthly[month] || []), ...seasonal]
+}
+
+/**
+ * 키워드 자동 보충 함수 (Cron에서 매일 호출)
+ * 잔여량이 임계치 이하이면 자동으로 키워드를 수집·확장
+ */
+async function autoReplenishKeywords(db: D1Database, options?: {
+  postsPerDay?: number      // 일일 발행 수 (기본 5)
+  thresholdDays?: number    // 이 일수 이하로 떨어지면 보충 (기본 30)
+  targetDays?: number       // 보충 목표 일수 (기본 90)
+}): Promise<{
+  triggered: boolean
+  reason: string
+  discovered: number
+  saved: number
+  details?: any
+}> {
+  const postsPerDay = options?.postsPerDay || 5
+  const thresholdDays = options?.thresholdDays || 30
+  const targetDays = options?.targetDays || 90
+
+  // 1. 현재 미사용 키워드 수 확인
+  const unusedRow = await db.prepare(
+    'SELECT COUNT(*) as cnt FROM keywords WHERE is_active = 1 AND used_count = 0'
+  ).first() as any
+  const unusedCount = unusedRow?.cnt || 0
+  const daysRemaining = Math.floor(unusedCount / postsPerDay)
+
+  // 2. 임계치 이상이면 스킵
+  if (daysRemaining >= thresholdDays) {
+    return {
+      triggered: false,
+      reason: `키워드 충분: ${unusedCount}개 (${daysRemaining}일분), 임계치 ${thresholdDays}일 이상`,
+      discovered: 0,
+      saved: 0
+    }
+  }
+
+  // 3. 보충 필요! 목표치까지 채울 수량 계산
+  const neededKeywords = (targetDays * postsPerDay) - unusedCount
+  console.log(`[키워드 자동 보충] 잔여 ${unusedCount}개(${daysRemaining}일) < 임계치 ${thresholdDays}일 → ${neededKeywords}개 수집 목표`)
+
+  let totalDiscovered = 0
+  let totalSaved = 0
+  const allDetails: any[] = []
+
+  // Phase 1: 계절/트렌드 시드로 수집
+  const seasonalSeeds = getSeasonalSeeds()
+  for (const seed of seasonalSeeds) {
+    if (totalSaved >= neededKeywords) break
+    const variations = generateDentalVariations(seed)
+    let seedSaved = 0
+    for (const kw of variations) {
+      const trimmed = kw.trim()
+      if (trimmed.length < 3 || trimmed.length > 50) continue
+      if (/대출|보험사|자동차|부동산|주식|코인/.test(trimmed)) continue
+
+      const existing = await db.prepare('SELECT id FROM keywords WHERE keyword = ? LIMIT 1').bind(trimmed).first()
+      if (existing) continue
+
+      const classification = classifyKeyword(trimmed)
+      try {
+        await db.prepare(
+          `INSERT OR IGNORE INTO keywords (keyword, category, subcategory, search_intent, priority, is_active)
+           VALUES (?, ?, ?, ?, ?, 1)`
+        ).bind(trimmed, classification.category, classification.subcategory, classification.search_intent, classification.priority).run()
+        seedSaved++
+        totalSaved++
+      } catch {}
+      totalDiscovered++
+    }
+    if (seedSaved > 0) allDetails.push({ seed, source: 'seasonal', saved: seedSaved })
+  }
+
+  // Phase 2: 기존 고우선순위 키워드에서 파생
+  if (totalSaved < neededKeywords) {
+    const topSeeds = await db.prepare(
+      `SELECT DISTINCT keyword FROM keywords 
+       WHERE is_active = 1 AND priority >= 70
+       ORDER BY used_count ASC, priority DESC LIMIT 30`
+    ).all()
+
+    for (const row of (topSeeds.results || []) as any[]) {
+      if (totalSaved >= neededKeywords) break
+      const seed = row.keyword
+      const variations = generateDentalVariations(seed).slice(0, 10) // 핵심 10개만
+      let seedSaved = 0
+
+      for (const kw of variations) {
+        const trimmed = kw.trim()
+        if (trimmed.length < 3 || trimmed.length > 50) continue
+        if (/대출|보험사|자동차|부동산|주식|코인/.test(trimmed)) continue
+
+        const existing = await db.prepare('SELECT id FROM keywords WHERE keyword = ? LIMIT 1').bind(trimmed).first()
+        if (existing) continue
+
+        const classification = classifyKeyword(trimmed)
+        try {
+          await db.prepare(
+            `INSERT OR IGNORE INTO keywords (keyword, category, subcategory, search_intent, priority, is_active)
+             VALUES (?, ?, ?, ?, ?, 1)`
+          ).bind(trimmed, classification.category, classification.subcategory, classification.search_intent, classification.priority).run()
+          seedSaved++
+          totalSaved++
+        } catch {}
+        totalDiscovered++
+      }
+      if (seedSaved > 0) allDetails.push({ seed, source: 'expansion', saved: seedSaved })
+    }
+  }
+
+  // Phase 3: Google Autocomplete (Phase 1, 2로 부족하면)
+  if (totalSaved < neededKeywords) {
+    const coreSeeds = ['임플란트', '치아교정', '사랑니', '충치 치료', '스케일링', '치아미백', '라미네이트', '잇몸 치료', '크라운', '신경치료']
+    for (const seed of coreSeeds) {
+      if (totalSaved >= neededKeywords) break
+      try {
+        const suggestions = await fetchGoogleSuggestions(seed)
+        let seedSaved = 0
+        for (const kw of suggestions) {
+          const trimmed = kw.trim()
+          if (trimmed.length < 3 || trimmed.length > 50) continue
+          if (/대출|보험사|자동차|부동산|주식|코인|다이어트|성형외과|피부과|한의원/.test(trimmed)) continue
+
+          const existing = await db.prepare('SELECT id FROM keywords WHERE keyword = ? LIMIT 1').bind(trimmed).first()
+          if (existing) continue
+
+          const classification = classifyKeyword(trimmed)
+          try {
+            await db.prepare(
+              `INSERT OR IGNORE INTO keywords (keyword, category, subcategory, search_intent, priority, is_active)
+               VALUES (?, ?, ?, ?, ?, 1)`
+            ).bind(trimmed, classification.category, classification.subcategory, classification.search_intent, classification.priority).run()
+            seedSaved++
+            totalSaved++
+          } catch {}
+          totalDiscovered++
+        }
+        if (seedSaved > 0) allDetails.push({ seed, source: 'google', saved: seedSaved })
+      } catch (e: any) {
+        console.error(`[Google Suggest 실패] ${seed}:`, e.message)
+      }
+    }
+  }
+
+  // 보충 이력 기록
+  try {
+    await db.prepare(
+      `INSERT INTO settings (key, value, description) VALUES ('last_keyword_replenish', ?, '마지막 키워드 자동 보충 일시')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    ).bind(new Date().toISOString()).run()
+    await db.prepare(
+      `INSERT INTO settings (key, value, description) VALUES ('last_keyword_replenish_count', ?, '마지막 키워드 자동 보충 수량')
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    ).bind(String(totalSaved)).run()
+  } catch {}
+
+  return {
+    triggered: true,
+    reason: `잔여 ${unusedCount}개(${daysRemaining}일) < 임계치 ${thresholdDays}일 → ${totalSaved}개 보충`,
+    discovered: totalDiscovered,
+    saved: totalSaved,
+    details: allDetails
+  }
+}
+
+export { keywordDiscoveryRoutes, classifyKeyword, fetchGoogleSuggestions, generateDentalVariations, autoReplenishKeywords, getSeasonalSeeds }
