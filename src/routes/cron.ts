@@ -197,6 +197,7 @@ cronApp.post('/', async (c) => {
 
   const selectedKeywords = keywords.slice(0, count)
   const results: any[] = []
+  console.log(`[Cron] count=${count}, keywords pool=${keywords.length}, selected=${selectedKeywords.length}, isManual=${isManual}`)
 
   // Inblog API 정보 사전 검증 (자동 발행 시)
   let inblogApiInfo: any = null
@@ -232,28 +233,21 @@ cronApp.post('/', async (c) => {
       // 내부 링크용 기존 발행글 목록 조회
       const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
-      // Claude API 호출 (최대 3회 시도)
+      // Claude API 호출 (1회 — 내부에서 Opus→Sonnet 자동 폴백)
+      // callClaude 내부에서 Opus 실패 시 Sonnet으로 자동 폴백하므로 외부 재시도 불필요
       let bestContent: any = null
-      let attempts = 0
-      const maxAttempts = 3
+      let attempts = 1
 
-      while (attempts < maxAttempts) {
-        attempts++
-        try {
-          const generated = await callClaude(
-            claudeApiKey, kw.keyword, region, disclaimer,
-            classified.type, typeGuide, classified.question, classified.emotion,
-            existingPosts
-          )
-          const seoScore = calculateSeoScore(generated, kw.keyword)
-
-          if (!bestContent || seoScore > (bestContent.seo_score || 0)) {
-            bestContent = { ...generated, seo_score: seoScore, attempts }
-          }
-          if (seoScore >= minScore) break
-        } catch (e: any) {
-          if (attempts >= maxAttempts) throw e
-        }
+      try {
+        const generated = await callClaude(
+          claudeApiKey, kw.keyword, region, disclaimer,
+          classified.type, typeGuide, classified.question, classified.emotion,
+          existingPosts
+        )
+        const seoScore = calculateSeoScore(generated, kw.keyword)
+        bestContent = { ...generated, seo_score: seoScore, attempts }
+      } catch (e: any) {
+        throw e  // 폴백까지 전부 실패 → 에러 전파
       }
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
@@ -489,7 +483,8 @@ cronApp.post('/', async (c) => {
       saved: replenishResult.saved,
       reason: replenishResult.reason
     } : null,
-    results
+    results,
+    debug: { count, selectedKeywords: selectedKeywords.length, keywordsPool: keywords.length, isManual }
   })
   } catch (outerErr: any) {
     return c.json({ error: 'Cron 라우트 오류: ' + (outerErr?.message || String(outerErr)), stack: outerErr?.stack?.substring(0, 500) }, 500)
@@ -543,41 +538,133 @@ ${internalLinksBlock}
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-opus-4-6',
-      max_tokens: 8000,
-      messages: [{ role: 'user', content: userPrompt }],
-      system: systemPrompt
-    })
-  })
+  // Opus → Sonnet 자동 폴백 전략
+  // Workers 유료 플랜 6분(360초) 제한 고려
+  // Opus 4.6: 240초 (4분) — 한국어 긴 글 생성에 충분한 시간
+  // Sonnet 4: 120초 (2분) — 폴백 모델, 더 빠름
+  const models = [
+    { id: 'claude-opus-4-6', timeout: 240000, label: 'Opus 4.6' },
+    { id: 'claude-sonnet-4-20250514', timeout: 120000, label: 'Sonnet 4' },
+  ]
 
-  if (!response.ok) throw new Error(`Claude API ${response.status}`)
+  let lastError = ''
+  for (const model of models) {
+    try {
+      console.log(`[Claude] ${model.label} 시도 중... (timeout: ${model.timeout / 1000}s)`)
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: model.id,
+          max_tokens: 6000,
+          messages: [{ role: 'user', content: userPrompt }],
+          system: systemPrompt
+        }),
+        signal: AbortSignal.timeout(model.timeout)
+      })
 
-  const data: any = await response.json()
-  const text = data.content?.[0]?.text || ''
-  const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('JSON 파싱 실패')
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '')
+        lastError = `Claude API ${response.status} (${model.label}): ${errText.slice(0, 200)}`
+        console.warn(`[Claude] ${model.label} 실패: ${lastError}`)
+        continue // 다음 모델로 폴백
+      }
 
-  const parsed = JSON.parse(jsonMatch[0])
-  const contentHtml = parsed.content_html || ''
-  const plainText = contentHtml.replace(/<[^>]*>/g, '')
+      const data: any = await response.json()
+      const text = data.content?.[0]?.text || ''
+      console.log(`[Claude] ${model.label} 응답 길이: ${text.length}자, 앞 200자: ${text.substring(0, 200)}`)
+      
+      // JSON 추출: 코드블록 제거 후 최외곽 {..} 추출
+      // Claude가 ```json ... ``` 로 감싸거나 직접 JSON을 출력함
+      let cleanText = text
+      // 1) 맨 앞/뒤의 ```json ... ``` 제거 (content_html 내부 backtick은 보존)
+      cleanText = cleanText.replace(/^[\s\S]*?```(?:json)?\s*\n?/, '')  // 앞쪽 ```json 제거
+      cleanText = cleanText.replace(/\n?\s*```\s*$/, '')                // 뒤쪽 ``` 제거
+      
+      // 2) 최외곽 JSON 객체 추출 ({로 시작해서 }로 끝나는 가장 큰 블록)
+      const firstBrace = cleanText.indexOf('{')
+      const lastBrace = cleanText.lastIndexOf('}')
+      let jsonStr = ''
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        jsonStr = cleanText.substring(firstBrace, lastBrace + 1)
+      }
+      
+      if (!jsonStr) {
+        lastError = `JSON 파싱 실패 (${model.label}) — 응답: ${text.substring(0, 300)}`
+        console.warn(`[Claude] ${lastError}`)
+        continue
+      }
 
-  return {
-    title: parsed.title || keyword,
-    slug: parsed.slug || keyword.replace(/\s+/g, '-'),
-    meta_description: parsed.meta_description || '',
-    content_html: contentHtml,
-    tags: parsed.tags || [],
-    faq: parsed.faq || [],
-    word_count: plainText.length
+      // JSON 파싱 시도 — content_html 내부의 특수문자로 인한 파싱 오류 복구
+      let parsed: any
+      try {
+        parsed = JSON.parse(jsonStr)
+      } catch (parseErr: any) {
+        console.warn(`[Claude] ${model.label} JSON 직접 파싱 실패: ${parseErr.message}, 복구 시도...`)
+        // content_html 필드를 수동 추출하여 복구
+        try {
+          const titleMatch = jsonStr.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const slugMatch = jsonStr.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const metaMatch = jsonStr.match(/"meta_description"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const htmlMatch = jsonStr.match(/"content_html"\s*:\s*"([\s\S]*?)"\s*,\s*"tags"/s)
+          const tagsMatch = jsonStr.match(/"tags"\s*:\s*\[([\s\S]*?)\]/s)
+          const faqMatch = jsonStr.match(/"faq"\s*:\s*\[([\s\S]*?)\]\s*[,}]/s)
+          
+          if (htmlMatch) {
+            parsed = {
+              title: titleMatch ? titleMatch[1] : keyword,
+              slug: slugMatch ? slugMatch[1] : keyword.replace(/\s+/g, '-'),
+              meta_description: metaMatch ? metaMatch[1] : '',
+              content_html: htmlMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n'),
+              tags: [],
+              faq: [],
+            }
+            // tags 파싱 시도
+            if (tagsMatch) {
+              try { parsed.tags = JSON.parse(`[${tagsMatch[1]}]`) } catch {}
+            }
+            // faq 파싱 시도
+            if (faqMatch) {
+              try { parsed.faq = JSON.parse(`[${faqMatch[1]}]`) } catch {}
+            }
+            console.log(`[Claude] ${model.label} JSON 복구 성공!`)
+          } else {
+            lastError = `JSON 복구 실패 (${model.label}): ${parseErr.message}`
+            console.warn(`[Claude] ${lastError}`)
+            continue
+          }
+        } catch (recoveryErr: any) {
+          lastError = `JSON 복구 예외 (${model.label}): ${recoveryErr.message}`
+          console.warn(`[Claude] ${lastError}`)
+          continue
+        }
+      }
+
+      const contentHtml = parsed.content_html || ''
+      const plainText = contentHtml.replace(/<[^>]*>/g, '')
+      console.log(`[Claude] ${model.label} 성공! (${plainText.length}자)`)
+
+      return {
+        title: parsed.title || keyword,
+        slug: parsed.slug || keyword.replace(/\s+/g, '-'),
+        meta_description: parsed.meta_description || '',
+        content_html: contentHtml,
+        tags: parsed.tags || [],
+        faq: parsed.faq || [],
+        word_count: plainText.length
+      }
+    } catch (e: any) {
+      lastError = `${model.label} 오류: ${e.message}`
+      console.warn(`[Claude] ${lastError}`)
+      continue // 타임아웃 등 → 다음 모델로 폴백
+    }
   }
+
+  throw new Error(`모든 Claude 모델 실패: ${lastError}`)
 }
 
 const cronHandler = cronApp
