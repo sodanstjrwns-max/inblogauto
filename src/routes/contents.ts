@@ -115,25 +115,26 @@ ${typeGuide}
 - 마지막 1문장: 이 글을 읽으면 무엇이 해소되는지 약속 ("이 글을 끝까지 읽으시면, ~를 판단할 수 있게 됩니다")
 - 절대 쓰지 않는 시작: "안녕하세요", "오늘은 ~에 대해 알아보겠습니다", "많은 분들이"
 
-## 제목(H1) 규칙 — "무서울까?" 패턴 필수
+## 제목(H1) 규칙 — 환자 감정 질문 로테이션
 - 키워드를 앞쪽 30자 이내에 배치
-- **제목에 반드시 "무서울까?", "아플까?", "괜찮을까?" 중 하나를 포함**해야 합니다 (환자가 실제로 느끼는 감정 질문)
-  - 좋은 예: "임플란트 수술, 정말 무서울까? — 통증부터 회복까지 솔직 안내 (2026)"
-  - 좋은 예: "사랑니 발치 아플까? — 실제 통증과 회복 기간 총정리 (2026)"
-  - 좋은 예: "치아 교정 첫 장치, 무서울까? — 불안한 마음을 위한 솔직 가이드"
-  - 좋은 예: "신경치료 괜찮을까? — 통증 걱정되는 분을 위한 단계별 안내"
-  - 나쁜 예: "임플란트 수술 과정 총정리" (감정이 없음)
-  - 나쁜 예: "사랑니 발치 아프나요?" ("아프나요?" 대신 "아플까?" 사용)
+- **제목에 반드시 아래 감정 질문 중 하나를 포함** (로테이션하여 다양하게):
+  - "무서울까?" — 공포/두려움 중심 (예: "임플란트 수술, 정말 무서울까?")
+  - "아플까?" — 통증 중심 (예: "사랑니 발치 아플까? — 실제 통증과 회복 기간")
+  - "괜찮을까?" — 걱정/불안 중심 (예: "신경치료 후 괜찮을까? — 회복 과정 솔직 안내")
+  - "어떻게 되나요?" — 궁금증 중심 (예: "스케일링 안 하면 어떻게 되나요?")
+  - "꼭 해야 하나요?" — 필요성 의문 (예: "잇몸 치료 꼭 해야 하나요? — 미루면 생기는 일")
+  - **같은 패턴이 연속 3회 이상 반복되면 안 됨** — 다양한 감정 질문 사용
 - 40~65자, 숫자 또는 연도 포함
 - ⚠️ 맞춤법 필수: "무서울까" (✅) "무섭을까" (❌) — ㅂ불규칙 활용 준수
 
-## H2 작성 원칙 (환자의 질문으로 쓴다)
+## H2 작성 원칙 (환자의 질문으로 쓴다) — ⚠️ 최소 6개 필수
+- **H2는 반드시 6~8개** 작성해야 합니다 (FAQ용 H2 포함). H2가 6개 미만이면 불합격입니다.
 - H2는 환자가 머릿속으로 하는 질문 그대로 쓴다
   - 나쁜 H2: "임플란트 과정" → 좋은 H2: "임플란트 수술, 실제로 어떻게 진행되나요?"
   - 나쁜 H2: "주의사항" → 좋은 H2: "수술 후 절대 하면 안 되는 행동은?"
   - 나쁜 H2: "통증 관리" → 좋은 H2: "많이 아프진 않나요? 솔직하게 알려드립니다"
 - 각 H2 섹션은 "질문 → 공감 1문장 → 구체적 답변 → 판단 기준 제시"의 구조
-- 각 H2 섹션: 200~400자
+- 각 H2 섹션: **300~500자** (충분히 깊이 있게 서술)
 
 ## 환자 공감 표현 패턴 (적극 사용)
 사용해야 하는 표현:
@@ -229,16 +230,23 @@ ${typeGuide}
   "content_type": "${contentType}"
 }
 
-## content_html 필수 구조 (환자 공감형)
-1. 도입부 <p>: 감정 인정 → 핵심 정보 제시 → 이 글의 약속
-2. <h2> 5~7개: 각각 환자의 실제 질문을 H2 제목으로
-3. 각 H2 섹션 내: 공감 1문장 → 구체적 답변 → 수치/기간/기준 → 판단 도구
+## content_html 필수 구조 (환자 공감형) — ⚠️ 3,000자 이상 필수
+**글 전체 분량은 반드시 3,000~4,500자(공백 포함) 이상이어야 합니다.** 2,500자 미만은 불합격.
+
+1. 도입부 <p>: 감정 인정 → 핵심 정보 제시 → 이 글의 약속 (200~300자)
+2. **<h2> 6~8개 필수**: 각각 환자의 실제 질문을 H2 제목으로 (FAQ H2 포함)
+3. 각 H2 섹션 내: 공감 1문장 → 구체적 답변 → 수치/기간/기준 → 판단 도구 (각 300~500자)
 4. <h3> 세부 소제목 적극 활용 (질문형)
 5. <ul>/<ol> 체크리스트, 단계별 리스트 적극 활용
 6. 비교 유형 시 <table> (보기 쉬운 비교표)
-7. FAQ: <h2>자주 묻는 질문</h2> 아래 <details><summary>Q</summary><p>A</p></details> 5~7개
-8. 마무리 <p>: 핵심 요약 + 환자 임파워먼트 (치과에서 할 질문 제안)
-9. 맨 하단 면책 문구: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>
+7. **[이미지 위치 마커]**: 본문 중 핵심 H2 섹션 2~3곳에 \`<!-- IMAGE_SLOT:설명 -->\` 마커를 삽입하세요
+   - 예: \`<!-- IMAGE_SLOT:임플란트 시술 단계별 과정 다이어그램 -->\`
+   - 예: \`<!-- IMAGE_SLOT:잇몸 치료 전후 비교 일러스트 -->\`
+   - 예: \`<!-- IMAGE_SLOT:사랑니 위치와 발치 필요성 판단 기준 차트 -->\`
+   - 이미지 설명은 해당 섹션 내용과 관련된 구체적 의료 일러스트/다이어그램으로 작성
+8. FAQ: <h2>자주 묻는 질문</h2> 아래 <details><summary>Q</summary><p>A</p></details> 5~7개
+9. 마무리 <p>: 핵심 요약 + 환자 임파워먼트 (치과에서 할 질문 제안)
+10. 맨 하단 면책 문구: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>
 
 ## 주의사항: content_html에 JSON-LD 스키마나 <script> 태그를 절대 포함하지 마세요. 순수 HTML 본문만 출력합니다.`
 }
@@ -520,16 +528,18 @@ function calculateSeoScore(content: any, keyword: string): number {
   const hasList = html.includes('<ul') || html.includes('<ol') || html.includes('<table')
   if (hasList) score += 4
 
-  // ===== 4. 분량 (10점) =====
-  if (plainText.length >= 2000) score += 10
-  else if (plainText.length >= 1500) score += 8
-  else if (plainText.length >= 1000) score += 5
+  // ===== 4. 분량 (10점) — 3,000자+ 권장 =====
+  if (plainText.length >= 3000) score += 10
+  else if (plainText.length >= 2500) score += 8
+  else if (plainText.length >= 2000) score += 6
+  else if (plainText.length >= 1500) score += 3
 
   // ===== 5. SEO 구조 (15점) =====
   const h2Count = (html.match(/<h2/gi) || []).length
-  if (h2Count >= 5) score += 7
-  else if (h2Count >= 4) score += 5
-  else if (h2Count >= 3) score += 3
+  if (h2Count >= 6) score += 7
+  else if (h2Count >= 5) score += 5
+  else if (h2Count >= 4) score += 3
+  else if (h2Count >= 3) score += 1
   // H2가 질문형인지 (가점)
   const questionH2s = h2Matches.filter(h => /\?|나요|은요|까요|할까|인가/.test(h.replace(/<[^>]*>/g, '')))
   if (questionH2s.length >= 2) score += 3
@@ -654,13 +664,13 @@ function calculateSeoScore(content: any, keyword: string): number {
     violations.push(`ㅂ불규칙 맞춤법 오류: ${foundSpellingErrors.join(', ')}`)
   }
 
-  // ===== 10. 제목에 "무서울까/아플까/괜찮을까" 포함 여부 (+3점 / -2점) =====
-  const titleHasEmotionQuestion = /무서울까|아플까|괜찮을까|불안할까|두려울까/.test(title)
+  // ===== 10. 제목에 환자 감정 질문 포함 여부 (+3점 / -2점) =====
+  const titleHasEmotionQuestion = /무서울까|아플까|괜찮을까|불안할까|두려울까|어떻게 되나요|꼭 해야 하나요|꼭 빼야 하나요|필요한가요/.test(title)
   if (titleHasEmotionQuestion) {
     score += 3
   } else {
     score -= 2
-    violations.push('제목에 환자 감정 질문("무서울까?"/"아플까?") 없음')
+    violations.push('제목에 환자 감정 질문 없음')
   }
 
   if (violations.length > 0) {

@@ -290,16 +290,16 @@ cronApp.post('/', async (c) => {
 
       const contentId = insertResult.meta.last_row_id as number
 
-      // === 2단계: AI 이미지 생성 (썸네일 1장만 — Inblog 1MB 제한 대응) ===
+      // === 2단계: AI 이미지 생성 (썸네일 + 본문 이미지) ===
       let thumbnailUrl = ''
       
+      // 2-A: 썸네일 (1200×630, OG 이미지용)
       try {
         const thumbResult = await generateAIImage(
           c.env, kw.keyword, kw.category || 'general', 'thumbnail', classified.type, contentId
         )
         thumbnailUrl = thumbResult.url
         
-        // ★ 안전장치: data URI가 반환되면 Pollinations 폴백 (절대 base64를 Inblog에 전송 금지)
         if (thumbnailUrl.startsWith('data:')) {
           console.warn('[이미지] data URI 감지 → Pollinations 폴백 강제 전환')
           const seed = Math.abs(Date.now() % 999999)
@@ -311,9 +311,39 @@ cronApp.post('/', async (c) => {
         thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
       }
 
+      // 2-B: 본문 내 이미지 자동 삽입 (IMAGE_SLOT 마커 교체)
+      // Claude가 <!-- IMAGE_SLOT:설명 --> 마커를 삽입, 여기서 실제 이미지로 교체
+      const imageSlotRegex = /<!--\s*IMAGE_SLOT:(.*?)\s*-->/g
+      const imageSlots: { marker: string; description: string }[] = []
+      let slotMatch
+      while ((slotMatch = imageSlotRegex.exec(finalHtml)) !== null) {
+        imageSlots.push({ marker: slotMatch[0], description: slotMatch[1].trim() })
+      }
+      
+      // 최대 2장까지 본문 이미지 생성 (Workers 타임아웃 대응)
+      const maxBodyImages = Math.min(imageSlots.length, 2)
+      for (let imgIdx = 0; imgIdx < maxBodyImages; imgIdx++) {
+        const slot = imageSlots[imgIdx]
+        try {
+          const bodyImgResult = await generateBodyImage(
+            c.env, kw.keyword, slot.description, contentId, imgIdx, classified.type
+          )
+          if (bodyImgResult.url) {
+            const altText = slot.description || `${kw.keyword} 관련 의료 일러스트`
+            const imgHtml = `<figure style="margin:24px 0"><img src="${bodyImgResult.url}" alt="${altText}" style="width:100%;border-radius:8px;max-height:500px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">▲ ${altText}</figcaption></figure>`
+            finalHtml = finalHtml.replace(slot.marker, imgHtml)
+            console.log(`[본문이미지] ${imgIdx + 1}/${maxBodyImages} 삽입 완료: ${altText.substring(0, 40)}`)
+          }
+        } catch (bodyImgErr: any) {
+          console.warn(`[본문이미지] ${imgIdx + 1} 생성 실패, 마커 제거:`, bodyImgErr.message)
+          finalHtml = finalHtml.replace(slot.marker, '')
+        }
+      }
+      // 남은 미처리 슬롯 제거
+      finalHtml = finalHtml.replace(/<!--\s*IMAGE_SLOT:.*?\s*-->/g, '')
+
       // === 3단계: 이미지 URL을 HTML에 삽입하고 DB 업데이트 ===
-      // 상단 썸네일만 삽입 (본문 내 추가 이미지 삭제 → 1MB 제한 방지)
-      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
+      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword} 대표 이미지" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
       // === 3.5단계: 내부 링크 자동 삽입 ===
       if (existingPosts.length > 0) {
@@ -551,6 +581,69 @@ ${internalLinksBlock}
 }
 
 const cronHandler = cronApp
+
+// ===== 본문 이미지 생성 (섹션별 맞춤 프롬프트, 1200×800) =====
+async function generateBodyImage(
+  env: any, keyword: string, slotDescription: string, contentId: number, imageIndex: number, contentType: string
+): Promise<{ url: string }> {
+  const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
+  const prompt = `High quality photorealistic 3D dental medical illustration: ${slotDescription}. Related to "${keyword}". Clean modern infographic style, soft pastel colors light blue and mint palette, ${noText}, no human faces, professional healthcare aesthetic, studio lighting, 8k quality. Image suitable for medical blog body content.`
+
+  // fal.ai API 키
+  let falApiKey = ''
+  try {
+    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
+    falApiKey = row?.value as string || ''
+  } catch (e) {}
+
+  if (falApiKey) {
+    // FLUX.2 pro → schnell 폴백 (본문 이미지는 2단계만)
+    const models = [
+      { name: 'FLUX.2 pro', url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra', body: { prompt, image_size: { width: 1200, height: 800 }, num_images: 1, safety_tolerance: '5', output_format: 'jpeg' } },
+      { name: 'FLUX.1 schnell', url: 'https://fal.run/fal-ai/flux/schnell', body: { prompt, image_size: { width: 1200, height: 800 }, num_images: 1, enable_safety_checker: false } }
+    ]
+
+    for (const model of models) {
+      try {
+        const res = await fetch(model.url, {
+          method: 'POST',
+          headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(model.body),
+          signal: AbortSignal.timeout(45000)
+        })
+        if (res.ok) {
+          const data: any = await res.json()
+          const imageUrl = data?.images?.[0]?.url
+          if (imageUrl) {
+            // R2에 영구 저장
+            if (env?.R2) {
+              try {
+                const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
+                if (imgRes.ok) {
+                  const buf = await imgRes.arrayBuffer()
+                  const key = `images/${contentId}/body_${imageIndex}.jpg`
+                  await env.R2.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' }, customMetadata: { keyword, description: slotDescription.substring(0, 200) } })
+                  return { url: `https://inblogauto.pages.dev/api/image/${contentId}/body_${imageIndex}.jpg` }
+                }
+              } catch (r2Err: any) {
+                console.warn(`[본문이미지] R2 저장 실패: ${r2Err.message}`)
+              }
+            }
+            return { url: imageUrl }
+          }
+        }
+      } catch (e: any) {
+        console.warn(`[본문이미지] ${model.name} 실패: ${e.message}`)
+        continue
+      }
+    }
+  }
+
+  // 폴백: Pollinations
+  const seed = Math.abs(Date.now() % 999999) + imageIndex
+  const encodedPrompt = encodeURIComponent(prompt.substring(0, 180))
+  return { url: `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=800&seed=${seed}&nologo=true&model=turbo` }
+}
 
 // ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
 
