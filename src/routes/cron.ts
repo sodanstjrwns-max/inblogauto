@@ -37,30 +37,95 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
 // ===== 콘텐츠 유형 로테이션 (균등 배분 - 비용/가격 제외) =====
 const CONTENT_TYPE_ROTATION: Array<'B' | 'C' | 'D' | 'E' | 'F'> = ['B', 'C', 'E', 'D', 'F', 'B', 'E', 'C', 'F', 'B']
 
-// ===== 제목 감정 패턴 강제 로테이션 (5패턴 균등 배분) =====
-const TITLE_EMOTION_PATTERNS = [
-  { pattern: '무서울까?', example: '임플란트 수술, 정말 무서울까?', emotion: '공포·두려움' },
-  { pattern: '아플까?', example: '사랑니 발치 아플까? — 실제 통증과 회복 기간', emotion: '통증 불안' },
-  { pattern: '괜찮을까?', example: '신경치료 후 괜찮을까? — 회복 과정 솔직 안내', emotion: '걱정·불안' },
-  { pattern: '어떻게 되나요?', example: '스케일링 안 하면 어떻게 되나요?', emotion: '궁금증·걱정' },
-  { pattern: '꼭 해야 하나요?', example: '잇몸 치료 꼭 해야 하나요? — 미루면 생기는 일', emotion: '필요성 의문' },
-]
+// ===== 제목 감정 패턴 — 키워드 의도(intent) 기반 자동 매칭 =====
+// 키워드 의미에 맞지 않는 감정 패턴을 강제하면 "임플란트 종류, 아플까?" 같은 부자연스러운 제목이 나옴
+// → 키워드가 표현하는 환자의 '진짜 궁금증'에 맞는 패턴만 후보로 제시
 
-async function getNextTitleEmotion(db: D1Database): Promise<{ pattern: string; example: string; emotion: string; index: number }> {
-  const row = await db.prepare("SELECT value FROM settings WHERE key = 'title_emotion_rotation_index'").first()
-  let currentIndex = parseInt(row?.value as string || '0')
-  if (isNaN(currentIndex) || currentIndex >= TITLE_EMOTION_PATTERNS.length) currentIndex = 0
+const TITLE_EMOTION_MAP: Record<string, { patterns: string[]; examples: (kw: string) => string[] }> = {
+  // 통증/공포 관련 키워드
+  pain_fear: {
+    patterns: ['무서울까?', '아플까?', '괜찮을까?'],
+    examples: (kw) => [`${kw}, 정말 무서울까?`, `${kw}, 많이 아플까?`, `${kw}, 괜찮을까?`]
+  },
+  // 선택/비교 관련 키워드
+  comparison: {
+    patterns: ['뭐가 다를까?', '어떤 걸 선택해야 할까?', '나에게 맞는 건?'],
+    examples: (kw) => [`${kw}, 뭐가 다를까?`, `${kw}, 어떤 걸 선택해야 할까?`, `${kw}, 나에게 맞는 건?`]
+  },
+  // 과정/방법 관련 키워드
+  process: {
+    patterns: ['어떻게 진행되나요?', '얼마나 걸릴까?', '무서울까?'],
+    examples: (kw) => [`${kw}, 어떻게 진행되나요?`, `${kw}, 얼마나 걸릴까?`, `${kw}, 정말 무서울까?`]
+  },
+  // 필요성/판단 관련 키워드
+  necessity: {
+    patterns: ['꼭 해야 하나요?', '안 하면 어떻게 되나요?', '미루면 괜찮을까?'],
+    examples: (kw) => [`${kw}, 꼭 해야 하나요?`, `${kw} 안 하면 어떻게 되나요?`, `${kw}, 미루면 괜찮을까?`]
+  },
+  // 회복/관리 관련 키워드
+  recovery: {
+    patterns: ['괜찮을까?', '이러면 정상인가요?', '언제 나을까?'],
+    examples: (kw) => [`${kw} 후 괜찮을까?`, `${kw}, 이러면 정상인가요?`, `${kw}, 언제 나을까?`]
+  },
+  // 일반/정보 키워드 (fallback)
+  general: {
+    patterns: ['괜찮을까?', '꼭 해야 하나요?', '어떻게 되나요?'],
+    examples: (kw) => [`${kw}, 괜찮을까?`, `${kw}, 꼭 해야 하나요?`, `${kw} 안 하면 어떻게 되나요?`]
+  }
+}
+
+// 키워드 → 의도(intent) 자동 분류
+function classifyKeywordIntent(keyword: string, contentType: string): string {
+  const kw = keyword.toLowerCase()
   
-  const selected = TITLE_EMOTION_PATTERNS[currentIndex]
-  const nextIndex = (currentIndex + 1) % TITLE_EMOTION_PATTERNS.length
+  // 통증/공포 키워드
+  if (/통증|아프|무서|공포|두려|겁|수술|발치|마취|피/.test(kw)) return 'pain_fear'
+  
+  // 선택/비교 키워드
+  if (/종류|차이|비교|선택|vs|어떤|추천|좋은|장단점/.test(kw)) return 'comparison'
+  
+  // 과정/방법/기간 키워드
+  if (/과정|방법|기간|순서|절차|진행|시간|단계/.test(kw)) return 'process'
+  
+  // 필요성/판단 키워드
+  if (/필요|해야|안 하면|미루|방치|무시|놔두|빼야/.test(kw)) return 'necessity'
+  
+  // 회복/관리 키워드
+  if (/회복|관리|후기|주의|음식|식사|부기|붓기|세척|정상/.test(kw)) return 'recovery'
+  
+  // 콘텐츠 타입 기반 fallback
+  if (contentType === 'E') return 'pain_fear'      // 불안/공포 해소
+  if (contentType === 'D') return 'comparison'       // 비교/선택
+  if (contentType === 'B') return 'process'          // 시술 과정
+  if (contentType === 'C') return 'recovery'         // 회복/주의
+  if (contentType === 'F') return 'necessity'        // 적응증/필요성
+  
+  return 'general'
+}
+
+async function getNextTitleEmotion(
+  db: D1Database, keyword: string, contentType: string
+): Promise<{ pattern: string; example: string; emotion: string; intent: string }> {
+  const intent = classifyKeywordIntent(keyword, contentType)
+  const emotionSet = TITLE_EMOTION_MAP[intent] || TITLE_EMOTION_MAP.general
+  
+  // 같은 intent 내에서 로테이션 (DB 카운터)
+  const rotKey = `title_emotion_idx_${intent}`
+  const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(rotKey).first()
+  let idx = parseInt(row?.value as string || '0')
+  if (isNaN(idx) || idx >= emotionSet.patterns.length) idx = 0
+  
+  const pattern = emotionSet.patterns[idx]
+  const example = emotionSet.examples(keyword)[idx]
+  const nextIdx = (idx + 1) % emotionSet.patterns.length
   
   if (row) {
-    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'title_emotion_rotation_index'").bind(String(nextIndex)).run()
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?").bind(String(nextIdx), rotKey).run()
   } else {
-    await db.prepare("INSERT INTO settings (key, value, description) VALUES ('title_emotion_rotation_index', ?, '제목 감정 패턴 로테이션 인덱스')").bind(String(nextIndex)).run()
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(rotKey, String(nextIdx), `제목 감정 로테이션 (${intent})`).run()
   }
   
-  return { ...selected, index: currentIndex }
+  return { pattern, example, emotion: intent, intent }
 }
 
 async function getNextContentType(db: D1Database): Promise<{ type: 'B' | 'C' | 'D' | 'E' | 'F'; index: number }> {
@@ -283,9 +348,9 @@ cronApp.post('/', async (c) => {
       // 내부 링크용 기존 발행글 목록 조회
       const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
-      // 제목 감정 패턴 강제 로테이션 (DB 카운터 기반 5패턴 균등 배분)
-      const titleEmotion = await getNextTitleEmotion(c.env.DB)
-      console.log(`[감정로테이션] #${titleEmotion.index}: "${titleEmotion.pattern}" (${titleEmotion.emotion})`)
+      // 제목 감정 패턴 — 키워드 의도(intent) 기반 자동 매칭
+      const titleEmotion = await getNextTitleEmotion(c.env.DB, kw.keyword, classified.type)
+      console.log(`[감정매칭] intent=${titleEmotion.intent}, pattern="${titleEmotion.pattern}" (${kw.keyword})`)
 
       // Claude API 호출 (1회 — 내부에서 Opus→Sonnet 자동 폴백)
       let bestContent: any = null
@@ -662,10 +727,12 @@ ${postList}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 검색하게 된 마음: ${patientQuestion}
 
-🎯 **[필수] 제목 감정 패턴 지정** — 이번 글의 제목에는 반드시 "${titleEmotion?.pattern || '무서울까?'}" 패턴을 사용하세요.
-- 예시: "${titleEmotion?.example || `${keyword}, 정말 무서울까?`}"
-- 이 패턴은 시스템이 균등 로테이션으로 배정한 것이므로 **절대 다른 패턴으로 변경하지 마세요**
-- ⚠️ "${titleEmotion?.pattern || '무서울까?'}"가 반드시 제목 내에 포함되어야 합니다
+🎯 **제목 작성 가이드** — 키워드 "${keyword}"에 대해 환자가 실제로 가질 법한 궁금증을 제목에 담으세요.
+- 추천 패턴: "${titleEmotion?.pattern || '괜찮을까?'}"
+- 예시: "${titleEmotion?.example || `${keyword}, 괜찮을까?`}"
+- 제목에 "${titleEmotion?.pattern || '괜찮을까?'}" 또는 비슷한 환자 시점의 질문형 표현을 포함하세요
+- ⚠️ 키워드 의미와 어울리지 않는 감정 표현은 절대 쓰지 마세요 (예: "종류"에 "아플까?"는 부자연스러움)
+- 제목은 환자가 실제 검색창에 칠 법한 자연스러운 문장이어야 합니다
 ${region ? `지역: ${region}
 - 본문 중 1~2곳에 "${region} 지역", "${region}에서" 등 자연스럽게 지역명 언급
 - 제목이나 메타 디스크립션에도 "${region}" 포함 권장
@@ -725,10 +792,15 @@ ${internalLinksBlock}
       
       // JSON 추출: 코드블록 제거 후 최외곽 {..} 추출
       // Claude가 ```json ... ``` 로 감싸거나 직접 JSON을 출력함
-      let cleanText = text
-      // 1) 맨 앞/뒤의 ```json ... ``` 제거 (content_html 내부 backtick은 보존)
-      cleanText = cleanText.replace(/^[\s\S]*?```(?:json)?\s*\n?/, '')  // 앞쪽 ```json 제거
-      cleanText = cleanText.replace(/\n?\s*```\s*$/, '')                // 뒤쪽 ``` 제거
+      let cleanText = text.trim()
+      // 1) ```json ... ``` 코드블록 전체 제거 (여러 종류 대응)
+      // 패턴: ``` 또는 ```json 으로 시작, ``` 으로 끝
+      const codeBlockMatch = cleanText.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+      if (codeBlockMatch) {
+        cleanText = codeBlockMatch[1].trim()
+      }
+      // 여전히 ``` 잔여물이 있으면 제거
+      cleanText = cleanText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?\s*```\s*$/, '')
       
       // 2) 최외곽 JSON 객체 추출 ({로 시작해서 }로 끝나는 가장 큰 블록)
       const firstBrace = cleanText.indexOf('{')
