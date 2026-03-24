@@ -41,6 +41,19 @@ app.route('/api/cron/generate', cronHandler)
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
 
+// IndexNow 키 파일 서빙 — 검색엔진이 키를 검증할 때 사용
+app.get('/api/indexnow/:key', async (c) => {
+  const key = c.req.param('key')
+  // DB에서 저장된 키와 비교
+  try {
+    const row = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'indexnow_api_key'").first()
+    if (row?.value === key) {
+      return new Response(key, { headers: { 'Content-Type': 'text/plain', 'Cache-Control': 'public, max-age=86400' } })
+    }
+  } catch {}
+  return c.text('Not Found', 404)
+})
+
 // 이미지 서빙 API — R2 우선, D1 폴백
 app.get('/api/image/:id/:type', async (c) => {
   try {

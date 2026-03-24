@@ -37,6 +37,32 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
 // ===== 콘텐츠 유형 로테이션 (균등 배분 - 비용/가격 제외) =====
 const CONTENT_TYPE_ROTATION: Array<'B' | 'C' | 'D' | 'E' | 'F'> = ['B', 'C', 'E', 'D', 'F', 'B', 'E', 'C', 'F', 'B']
 
+// ===== 제목 감정 패턴 강제 로테이션 (5패턴 균등 배분) =====
+const TITLE_EMOTION_PATTERNS = [
+  { pattern: '무서울까?', example: '임플란트 수술, 정말 무서울까?', emotion: '공포·두려움' },
+  { pattern: '아플까?', example: '사랑니 발치 아플까? — 실제 통증과 회복 기간', emotion: '통증 불안' },
+  { pattern: '괜찮을까?', example: '신경치료 후 괜찮을까? — 회복 과정 솔직 안내', emotion: '걱정·불안' },
+  { pattern: '어떻게 되나요?', example: '스케일링 안 하면 어떻게 되나요?', emotion: '궁금증·걱정' },
+  { pattern: '꼭 해야 하나요?', example: '잇몸 치료 꼭 해야 하나요? — 미루면 생기는 일', emotion: '필요성 의문' },
+]
+
+async function getNextTitleEmotion(db: D1Database): Promise<{ pattern: string; example: string; emotion: string; index: number }> {
+  const row = await db.prepare("SELECT value FROM settings WHERE key = 'title_emotion_rotation_index'").first()
+  let currentIndex = parseInt(row?.value as string || '0')
+  if (isNaN(currentIndex) || currentIndex >= TITLE_EMOTION_PATTERNS.length) currentIndex = 0
+  
+  const selected = TITLE_EMOTION_PATTERNS[currentIndex]
+  const nextIndex = (currentIndex + 1) % TITLE_EMOTION_PATTERNS.length
+  
+  if (row) {
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'title_emotion_rotation_index'").bind(String(nextIndex)).run()
+  } else {
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES ('title_emotion_rotation_index', ?, '제목 감정 패턴 로테이션 인덱스')").bind(String(nextIndex)).run()
+  }
+  
+  return { ...selected, index: currentIndex }
+}
+
 async function getNextContentType(db: D1Database): Promise<{ type: 'B' | 'C' | 'D' | 'E' | 'F'; index: number }> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = 'content_type_rotation_index'").first()
   let currentIndex = parseInt(row?.value as string || '0')
@@ -233,8 +259,11 @@ cronApp.post('/', async (c) => {
       // 내부 링크용 기존 발행글 목록 조회
       const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
+      // 제목 감정 패턴 강제 로테이션 (DB 카운터 기반 5패턴 균등 배분)
+      const titleEmotion = await getNextTitleEmotion(c.env.DB)
+      console.log(`[감정로테이션] #${titleEmotion.index}: "${titleEmotion.pattern}" (${titleEmotion.emotion})`)
+
       // Claude API 호출 (1회 — 내부에서 Opus→Sonnet 자동 폴백)
-      // callClaude 내부에서 Opus 실패 시 Sonnet으로 자동 폴백하므로 외부 재시도 불필요
       let bestContent: any = null
       let attempts = 1
 
@@ -242,7 +271,7 @@ cronApp.post('/', async (c) => {
         const generated = await callClaude(
           claudeApiKey, kw.keyword, region, disclaimer,
           classified.type, typeGuide, classified.question, classified.emotion,
-          existingPosts
+          existingPosts, titleEmotion
         )
         const seoScore = calculateSeoScore(generated, kw.keyword)
         bestContent = { ...generated, seo_score: seoScore, attempts }
@@ -362,7 +391,42 @@ cronApp.post('/', async (c) => {
         thumbnail_url: thumbnailUrl
       })
 
-      // DB 업데이트 (이미지 URL + 내부 링크 + Schema 포함 최종 HTML)
+      // === 3.7단계: 목차(TOC) 자동 생성 — H2 앵커 기반, Featured Snippet 최적화 ===
+      const tocH2Matches = [...finalHtml.matchAll(/<h2[^>]*>(.*?)<\/h2>/gi)]
+      if (tocH2Matches.length >= 3) {
+        // H2에 id 속성 추가 (앵커 링크용)
+        let tocItems = ''
+        let h2Index = 0
+        finalHtml = finalHtml.replace(/<h2([^>]*)>(.*?)<\/h2>/gi, (match, attrs, text) => {
+          const cleanText = text.replace(/<[^>]*>/g, '').trim()
+          const anchorId = `section-${h2Index}`
+          h2Index++
+          tocItems += `<li style="margin:4px 0"><a href="#${anchorId}" style="color:#2563eb;text-decoration:none;font-size:15px">${cleanText}</a></li>\n`
+          // id가 이미 있으면 교체, 없으면 추가
+          if (/id=/.test(attrs)) {
+            return `<h2${attrs.replace(/id="[^"]*"/, `id="${anchorId}"`)}>${text}</h2>`
+          }
+          return `<h2 id="${anchorId}"${attrs}>${text}</h2>`
+        })
+
+        // 목차 HTML (썸네일 바로 뒤, 본문 시작 전에 삽입)
+        const tocHtml = `<nav style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px 24px;margin:0 0 28px 0">
+<p style="font-weight:700;font-size:16px;color:#0369a1;margin:0 0 12px 0">📋 이 글의 목차</p>
+<ol style="margin:0;padding-left:20px;line-height:1.8">
+${tocItems}</ol>
+</nav>\n`
+        
+        // 썸네일 figure 태그 바로 뒤에 삽입
+        const thumbEnd = finalHtml.indexOf('</figure>')
+        if (thumbEnd !== -1) {
+          finalHtml = finalHtml.slice(0, thumbEnd + 9) + '\n' + tocHtml + finalHtml.slice(thumbEnd + 9)
+        } else {
+          finalHtml = tocHtml + finalHtml
+        }
+        console.log(`[TOC] 목차 ${tocH2Matches.length}개 항목 삽입 완료`)
+      }
+
+      // DB 업데이트 (이미지 URL + 내부 링크 + Schema + TOC 포함 최종 HTML)
       await c.env.DB.prepare(
         `UPDATE contents SET content_html = ?, thumbnail_url = ? WHERE id = ?`
       ).bind(finalHtml, thumbnailUrl, contentId).run()
@@ -414,6 +478,14 @@ cronApp.post('/', async (c) => {
           await c.env.DB.prepare(
             `UPDATE contents SET status = 'published', updated_at = datetime('now') WHERE id = ?`
           ).bind(contentId).run()
+
+          // === 검색엔진 즉시 색인 요청 ===
+          try {
+            await requestSearchEngineIndexing(inblogUrl, c.env.DB)
+            console.log(`[색인요청] ${inblogUrl} → Bing/Naver/Google 전송 완료`)
+          } catch (indexErr: any) {
+            console.warn(`[색인요청] 실패 (무시): ${indexErr.message}`)
+          }
 
         } catch (pubErr: any) {
           console.error(`자동 발행 실패 (${kw.keyword}):`, pubErr.message)
@@ -495,7 +567,8 @@ cronApp.post('/', async (c) => {
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
   contentType: string, typeGuide: string, patientQuestion: string, emotion?: string,
-  existingPosts?: { title: string; slug: string; keyword: string; category: string }[]
+  existingPosts?: { title: string; slug: string; keyword: string; category: string }[],
+  titleEmotion?: { pattern: string; example: string; emotion: string }
 ) {
   const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer, emotion)
 
@@ -521,6 +594,11 @@ ${postList}
 콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 검색하게 된 마음: ${patientQuestion}
+
+🎯 **[필수] 제목 감정 패턴 지정** — 이번 글의 제목에는 반드시 "${titleEmotion?.pattern || '무서울까?'}" 패턴을 사용하세요.
+- 예시: "${titleEmotion?.example || `${keyword}, 정말 무서울까?`}"
+- 이 패턴은 시스템이 균등 로테이션으로 배정한 것이므로 **절대 다른 패턴으로 변경하지 마세요**
+- ⚠️ "${titleEmotion?.pattern || '무서울까?'}"가 반드시 제목 내에 포함되어야 합니다
 ${region ? `지역: ${region}
 - 본문 중 1~2곳에 "${region} 지역", "${region}에서" 등 자연스럽게 지역명 언급
 - 제목이나 메타 디스크립션에도 "${region}" 포함 권장
@@ -977,6 +1055,67 @@ function hashString(str: string): number {
     hash |= 0
   }
   return hash
+}
+
+// ===== 검색엔진 즉시 색인 요청 (IndexNow + Google Ping) =====
+// IndexNow: Bing, Naver, Yandex, DuckDuckGo 즉시 색인
+// Google Ping: sitemap 기반 크롤링 요청
+async function requestSearchEngineIndexing(url: string, db: D1Database): Promise<void> {
+  // IndexNow API 키 (settings에서 읽거나 자동 생성)
+  let indexNowKey = ''
+  try {
+    const row = await db.prepare("SELECT value FROM settings WHERE key = 'indexnow_api_key'").first()
+    indexNowKey = row?.value as string || ''
+  } catch {}
+  
+  if (!indexNowKey) {
+    // 랜덤 키 생성 후 저장 (최초 1회)
+    indexNowKey = crypto.randomUUID().replace(/-/g, '')
+    await db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value, description) VALUES ('indexnow_api_key', ?, 'IndexNow API 키 (자동 생성)')"
+    ).bind(indexNowKey).run()
+  }
+
+  const host = new URL(url).host
+  const results: string[] = []
+
+  // IndexNow 일괄 제출 (Bing, Naver, Yandex — Bing이 자동 공유하지만 직접도 보냄)
+  const indexNowEndpoints = [
+    { name: 'Bing', url: 'https://www.bing.com/indexnow' },
+    { name: 'Naver', url: 'https://searchadvisor.naver.com/indexnow' },
+    { name: 'Yandex', url: 'https://yandex.com/indexnow' },
+  ]
+  
+  for (const endpoint of indexNowEndpoints) {
+    try {
+      const res = await fetch(endpoint.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: host,
+          key: indexNowKey,
+          keyLocation: `https://inblogauto.pages.dev/api/indexnow/${indexNowKey}`,
+          urlList: [url]
+        }),
+        signal: AbortSignal.timeout(10000)
+      })
+      results.push(`${endpoint.name}: ${res.status}`)
+    } catch (e: any) {
+      results.push(`${endpoint.name}: fail`)
+    }
+  }
+
+  // 4) Google Ping (sitemap 기반)
+  try {
+    const sitemapUrl = `https://${host}/sitemap.xml`
+    const googlePing = `https://www.google.com/ping?sitemap=${encodeURIComponent(sitemapUrl)}`
+    const res = await fetch(googlePing, { signal: AbortSignal.timeout(10000) })
+    results.push(`Google Ping: ${res.status}`)
+  } catch (e: any) {
+    results.push(`Google Ping: fail (${e.message})`)
+  }
+
+  console.log(`[색인요청] ${results.join(' | ')}`)
 }
 
 export { cronHandler }
