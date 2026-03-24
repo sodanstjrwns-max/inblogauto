@@ -1298,6 +1298,813 @@ enhancementRoutes.post('/seasonal/apply', async (c) => {
   })
 })
 
+// ======================================================================
+// 11. 사이트맵 자동 제출 + Google Search Console Ping
+// ======================================================================
+
+// POST /api/enhancements/sitemap/submit — 사이트맵을 주요 검색엔진에 자동 제출
+enhancementRoutes.post('/sitemap/submit', async (c) => {
+  const sitemapUrl = 'https://inblogauto.pages.dev/api/enhancements/sitemap.xml'
+  const blogSitemapUrl = 'https://bdbddc.inblog.ai/sitemap.xml'
+  
+  // IndexNow 키 확인/생성
+  let keyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'indexnow_api_key'").first()
+  let indexNowKey = keyRow?.value as string || ''
+  if (!indexNowKey) {
+    // 자동 생성
+    indexNowKey = crypto.randomUUID().replace(/-/g, '').substring(0, 32)
+    await c.env.DB.prepare(
+      "INSERT OR REPLACE INTO settings (key, value, description) VALUES ('indexnow_api_key', ?, 'IndexNow API 키 (자동 생성)')"
+    ).bind(indexNowKey).run()
+  }
+  
+  // 모든 발행 URL 가져오기
+  const posts = await c.env.DB.prepare(
+    "SELECT slug FROM contents WHERE status = 'published' ORDER BY created_at DESC LIMIT 100"
+  ).all()
+  const urlList = (posts.results || []).map((p: any) => `https://bdbddc.inblog.ai/${p.slug}`)
+  
+  const indexNowPayload = {
+    host: 'bdbddc.inblog.ai',
+    key: indexNowKey,
+    keyLocation: `https://inblogauto.pages.dev/api/indexnow/${indexNowKey}`,
+    urlList
+  }
+  
+  // IndexNow 프로토콜로 주요 검색엔진에 제출 (Google은 서치콘솔에서 사이트맵 등록 권장)
+  const engines = [
+    { name: 'Bing (IndexNow)', url: 'https://www.bing.com/indexnow' },
+    { name: 'Naver (IndexNow)', url: 'https://searchadvisor.naver.com/indexnow' },
+    { name: 'Yandex (IndexNow)', url: 'https://yandex.com/indexnow' },
+    { name: 'Google Ping', url: `https://www.google.com/ping?sitemap=${encodeURIComponent(sitemapUrl)}`, method: 'GET' },
+  ]
+  
+  const results: any[] = []
+  
+  for (const engine of engines) {
+    try {
+      let response: Response
+      if ((engine as any).method === 'GET') {
+        response = await fetch(engine.url)
+      } else {
+        response = await fetch(engine.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(indexNowPayload)
+        })
+      }
+      
+      const ok = response.ok || response.status === 200 || response.status === 202
+      results.push({ 
+        engine: engine.name, 
+        status_code: response.status,
+        ok,
+        urls_submitted: urlList.length,
+        status: ok ? 'submitted' : 'error'
+      })
+      
+      // 로그 DB 저장
+      await c.env.DB.prepare(
+        "INSERT INTO sitemap_submissions (search_engine, url, status_code, submitted_at) VALUES (?, ?, ?, datetime('now'))"
+      ).bind(engine.name, engine.url, response.status).run()
+      
+    } catch (err: any) {
+      results.push({ engine: engine.name, status: 'failed', error: err.message })
+    }
+  }
+  
+  return c.json({
+    message: '사이트맵 검색엔진 제출 완료',
+    sitemap_url: sitemapUrl,
+    blog_sitemap_url: blogSitemapUrl,
+    results
+  })
+})
+
+// GET /api/enhancements/sitemap/history — 사이트맵 제출 이력
+enhancementRoutes.get('/sitemap/history', async (c) => {
+  const logs = await c.env.DB.prepare(
+    "SELECT * FROM sitemap_submissions ORDER BY submitted_at DESC LIMIT 50"
+  ).all()
+  return c.json({ submissions: logs.results || [] })
+})
+
+
+// ======================================================================
+// 12. 기존 글 레트로핏 (TOC + CTA 소급 적용 + Inblog 동기화)
+// ======================================================================
+
+// CTA 템플릿 (키워드 placeholder 사용)
+function buildCtaHtml(keyword: string, contentId: number): string {
+  const CTA_TEMPLATES = [
+    {
+      emoji: '💬',
+      heading: '이 글이 도움이 되셨나요?',
+      body: `${keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 전문의와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
+      action: '📌 이 글을 저장해두시면 나중에 치과 방문 시 참고하실 수 있습니다.'
+    },
+    {
+      emoji: '🔖',
+      heading: '다음에 치과 방문하실 때 기억하세요',
+      body: `오늘 읽으신 ${keyword} 정보를 바탕으로, 치과에서 "제 경우에는 어떤가요?"라고 한 번 물어보세요. 본인의 상황에 맞는 구체적인 답변을 받으실 수 있습니다.`,
+      action: '📌 궁금한 점을 미리 메모해서 가시면 상담이 훨씬 효율적입니다.'
+    },
+    {
+      emoji: '✅',
+      heading: '마지막으로 한 가지 더',
+      body: `${keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 전문의와 직접 확인하시기 바랍니다.`,
+      action: '📌 주변에 같은 고민을 가진 분이 계시다면 이 글을 공유해주세요.'
+    }
+  ]
+  const idx = contentId % CTA_TEMPLATES.length
+  const cta = CTA_TEMPLATES[idx]
+  return `\n<div style="background:linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%);border:1px solid #bae6fd;border-radius:12px;padding:24px 28px;margin:32px 0 24px 0">
+<p style="font-weight:700;font-size:17px;color:#0369a1;margin:0 0 12px 0">${cta.emoji} ${cta.heading}</p>
+<p style="font-size:15px;color:#334155;line-height:1.7;margin:0 0 12px 0">${cta.body}</p>
+<p style="font-size:14px;color:#0369a1;margin:0;font-weight:500">${cta.action}</p>
+</div>\n`
+}
+
+// TOC 삽입 함수
+function injectToc(html: string): { html: string; tocCount: number } {
+  const tocH2Matches = [...html.matchAll(/<h2[^>]*>(.*?)<\/h2>/gi)]
+  if (tocH2Matches.length < 3) return { html, tocCount: 0 }
+  
+  // 이미 TOC가 있는지 확인
+  if (html.includes('이 글의 목차') || html.includes('table-of-contents')) {
+    return { html, tocCount: tocH2Matches.length }
+  }
+  
+  let tocItems = ''
+  let h2Index = 0
+  let newHtml = html.replace(/<h2([^>]*)>(.*?)<\/h2>/gi, (match, attrs, text) => {
+    const cleanText = text.replace(/<[^>]*>/g, '').trim()
+    const anchorId = `section-${h2Index}`
+    h2Index++
+    tocItems += `<li style="margin:4px 0"><a href="#${anchorId}" style="color:#2563eb;text-decoration:none;font-size:15px">${cleanText}</a></li>\n`
+    if (/id=/.test(attrs)) {
+      return `<h2${attrs.replace(/id="[^"]*"/, `id="${anchorId}"`)}>${text}</h2>`
+    }
+    return `<h2 id="${anchorId}"${attrs}>${text}</h2>`
+  })
+
+  const tocHtml = `<nav style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:12px;padding:20px 24px;margin:0 0 28px 0">
+<p style="font-weight:700;font-size:16px;color:#0369a1;margin:0 0 12px 0">📋 이 글의 목차</p>
+<ol style="margin:0;padding-left:20px;line-height:1.8">
+${tocItems}</ol>
+</nav>\n`
+  
+  const thumbEnd = newHtml.indexOf('</figure>')
+  if (thumbEnd !== -1) {
+    newHtml = newHtml.slice(0, thumbEnd + 9) + '\n' + tocHtml + newHtml.slice(thumbEnd + 9)
+  } else {
+    newHtml = tocHtml + newHtml
+  }
+  
+  return { html: newHtml, tocCount: h2Index }
+}
+
+// CTA 삽입 함수
+function injectCta(html: string, keyword: string, contentId: number): string {
+  // 이미 CTA가 있는지 확인 (다양한 패턴)
+  if (html.includes('이 글이 도움이 되셨나요') || 
+      html.includes('치과 방문하실 때 기억하세요') || 
+      html.includes('마지막으로 한 가지 더')) {
+    return html
+  }
+  
+  const ctaHtml = buildCtaHtml(keyword, contentId)
+  
+  // 의료 면책 div 앞에 삽입
+  const disclaimerDivIdx = html.indexOf('<div style="background:#f0f7ff')
+  if (disclaimerDivIdx !== -1) {
+    return html.slice(0, disclaimerDivIdx) + ctaHtml + html.slice(disclaimerDivIdx)
+  }
+  // schema script 앞에 삽입
+  const schemaIdx = html.indexOf('<script type="application/ld+json">')
+  if (schemaIdx !== -1) {
+    return html.slice(0, schemaIdx) + ctaHtml + html.slice(schemaIdx)
+  }
+  return html + ctaHtml
+}
+
+// POST /api/enhancements/retrofit — 기존 글에 TOC + CTA + Schema 소급 적용
+enhancementRoutes.post('/retrofit', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const dryRun = (body as any).dry_run || false
+  const updateInblog = (body as any).update_inblog || false
+  const contentIds: number[] = (body as any).content_ids || []
+  
+  let query = `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
+                      c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
+                      c.thumbnail_url, k.category
+               FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+               WHERE c.status = 'published'`
+  if (contentIds.length > 0) {
+    query += ` AND c.id IN (${contentIds.join(',')})`
+  }
+  query += ` ORDER BY c.id`
+  
+  const targets = await c.env.DB.prepare(query).all()
+  const items = (targets.results || []) as any[]
+  
+  let tocAdded = 0, ctaAdded = 0, schemaAdded = 0, totalUpdated = 0
+  const details: any[] = []
+  
+  // 내부 링크용 전체 포스트 목록
+  const allPosts = await c.env.DB.prepare(
+    `SELECT c.id, c.title, c.slug, c.keyword_text as keyword, k.category
+     FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id WHERE c.status = 'published'`
+  ).all()
+  const postList = (allPosts.results || []).map((r: any) => ({
+    id: r.id, title: r.title, slug: r.slug, keyword: r.keyword, category: r.category || 'general'
+  }))
+  
+  for (const item of items) {
+    let html = item.content_html || ''
+    let changes: string[] = []
+    
+    // 1. TOC 삽입
+    const hasToc = html.includes('이 글의 목차') || html.includes('table-of-contents')
+    if (!hasToc) {
+      const tocResult = injectToc(html)
+      if (tocResult.tocCount > 0) {
+        html = tocResult.html
+        tocAdded++
+        changes.push(`TOC(${tocResult.tocCount}항목)`)
+      }
+    }
+    
+    // 2. CTA 삽입
+    const hasCta = html.includes('이 글이 도움이 되셨나요') || 
+                   html.includes('치과 방문하실 때 기억하세요') || 
+                   html.includes('마지막으로 한 가지 더')
+    if (!hasCta) {
+      html = injectCta(html, item.keyword_text, item.id)
+      ctaAdded++
+      changes.push('CTA')
+    }
+    
+    // 3. Schema 삽입/갱신
+    const hasSchema = html.includes('application/ld+json')
+    if (!hasSchema) {
+      html = injectSchemaToHtml(html, item.faq_json, item)
+      schemaAdded++
+      changes.push('Schema')
+    }
+    
+    // 4. 내부 링크 보강
+    const otherPosts = postList.filter(p => p.id !== item.id)
+    const { html: linkedHtml, insertedLinks } = insertInternalLinks(html, item.keyword_text, otherPosts, item.category || 'general', 3)
+    if (insertedLinks.length > 0) {
+      html = linkedHtml
+      changes.push(`내부링크(${insertedLinks.length}개)`)
+    }
+    
+    if (changes.length > 0) {
+      if (!dryRun) {
+        await c.env.DB.prepare(
+          "UPDATE contents SET content_html = ?, updated_at = datetime('now') WHERE id = ?"
+        ).bind(html, item.id).run()
+      }
+      totalUpdated++
+      details.push({ id: item.id, title: item.title.substring(0, 40), changes })
+    }
+  }
+  
+  // Inblog 동기화
+  let inblogResult: any = null
+  if (updateInblog && !dryRun && totalUpdated > 0) {
+    const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+    const inblogApiKey = inblogKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
+    
+    if (inblogApiKey) {
+      const updatedIds = details.map(d => d.id)
+      const publishedPosts = await c.env.DB.prepare(
+        `SELECT c.id, c.content_html, pl.inblog_post_id
+         FROM contents c JOIN publish_logs pl ON c.id = pl.content_id AND pl.status = 'published'
+         WHERE c.id IN (${updatedIds.join(',')}) AND pl.inblog_post_id IS NOT NULL`
+      ).all()
+      
+      let ok = 0, fail = 0
+      for (const p of (publishedPosts.results || []) as any[]) {
+        try {
+          const r = await fetch(`https://inblog.ai/api/v1/posts/${p.inblog_post_id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/vnd.api+json', 'Authorization': `Bearer ${inblogApiKey}`, 'Accept': 'application/vnd.api+json' },
+            body: JSON.stringify({ jsonapi: { version: '1.0' }, data: { type: 'posts', id: p.inblog_post_id, attributes: { content_html: p.content_html } } })
+          })
+          if (r.ok) ok++; else fail++
+        } catch { fail++ }
+      }
+      inblogResult = { synced: ok, failed: fail }
+    }
+  }
+  
+  return c.json({
+    message: `레트로핏 완료: ${totalUpdated}건 업데이트`,
+    dry_run: dryRun,
+    total_checked: items.length,
+    updated: totalUpdated,
+    toc_added: tocAdded,
+    cta_added: ctaAdded,
+    schema_added: schemaAdded,
+    inblog_sync: inblogResult,
+    details
+  })
+})
+
+
+// ======================================================================
+// 13. A/B 타이틀 테스팅 시스템
+// ======================================================================
+
+// POST /api/enhancements/ab-test/generate — 타이틀 변형 생성 (Claude 기반)
+enhancementRoutes.post('/ab-test/generate', async (c) => {
+  const body = await c.req.json()
+  const contentId = (body as any).content_id
+  if (!contentId) return c.json({ error: 'content_id 필요' }, 400)
+  
+  const content: any = await c.env.DB.prepare(
+    "SELECT id, title, keyword_text, slug, meta_description FROM contents WHERE id = ?"
+  ).bind(contentId).first()
+  if (!content) return c.json({ error: '콘텐츠를 찾을 수 없습니다' }, 404)
+  
+  // 이미 변형이 있는지 확인
+  const existing = await c.env.DB.prepare(
+    "SELECT COUNT(*) as cnt FROM title_variants WHERE content_id = ?"
+  ).bind(contentId).first()
+  if ((existing as any)?.cnt > 0) {
+    const variants = await c.env.DB.prepare(
+      "SELECT * FROM title_variants WHERE content_id = ? ORDER BY variant_label"
+    ).bind(contentId).all()
+    return c.json({ message: '이미 변형이 존재합니다', variants: variants.results })
+  }
+  
+  // Claude로 타이틀 변형 3개 생성
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'claude_api_key'").first()
+  const claudeKey = apiKeyRow?.value as string || c.env.CLAUDE_API_KEY || ''
+  
+  let variantTitles: string[] = [content.title] // A = 원본
+  
+  if (claudeKey) {
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': claudeKey,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 500,
+          messages: [{
+            role: 'user',
+            content: `아래 치과 블로그 제목의 변형 2개를 만들어주세요. 
+
+원본 제목: ${content.title}
+키워드: ${content.keyword_text}
+
+요구사항:
+1. 키워드는 반드시 포함
+2. 각 변형은 다른 감정/접근법 사용 (호기심, 안심, 긴급성 등)
+3. 30-60자 길이
+4. 구글 검색 CTR을 높이는 데 초점
+
+JSON으로만 답변: {"b": "변형B 제목", "c": "변형C 제목"}`
+          }]
+        })
+      })
+      
+      if (response.ok) {
+        const data = await response.json() as any
+        const text = data.content?.[0]?.text || ''
+        try {
+          const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || ''
+          const parsed = JSON.parse(jsonStr)
+          if (parsed.b) variantTitles.push(parsed.b)
+          if (parsed.c) variantTitles.push(parsed.c)
+        } catch { /* 파싱 실패 시 원본만 */ }
+      }
+    } catch (e: any) {
+      console.error('A/B title generation failed:', e.message)
+    }
+  }
+  
+  // 수동 변형 (Claude 실패 시 폴백)
+  if (variantTitles.length < 3) {
+    const kw = content.keyword_text
+    const patterns = [
+      `${kw}, 전문의가 알려주는 핵심 포인트 (2026)`,
+      `${kw} 완벽 가이드 — 치료 전 반드시 알아야 할 것들`,
+      `${kw}: 환자가 가장 궁금해하는 7가지 질문`
+    ]
+    while (variantTitles.length < 3) {
+      variantTitles.push(patterns[variantTitles.length - 1] || patterns[0])
+    }
+  }
+  
+  // DB 저장
+  const labels = ['A', 'B', 'C']
+  for (let i = 0; i < Math.min(variantTitles.length, 3); i++) {
+    await c.env.DB.prepare(
+      "INSERT INTO title_variants (content_id, variant_label, title, is_active) VALUES (?, ?, ?, ?)"
+    ).bind(contentId, labels[i], variantTitles[i], i === 0 ? 1 : 0).run()
+  }
+  
+  const variants = await c.env.DB.prepare(
+    "SELECT * FROM title_variants WHERE content_id = ? ORDER BY variant_label"
+  ).bind(contentId).all()
+  
+  return c.json({
+    message: `${variantTitles.length}개 타이틀 변형 생성 완료`,
+    content_id: contentId,
+    original_title: content.title,
+    variants: variants.results
+  })
+})
+
+// POST /api/enhancements/ab-test/activate — 특정 변형 활성화 (Inblog 제목 변경)
+enhancementRoutes.post('/ab-test/activate', async (c) => {
+  const body = await c.req.json()
+  const variantId = (body as any).variant_id
+  if (!variantId) return c.json({ error: 'variant_id 필요' }, 400)
+  
+  const variant: any = await c.env.DB.prepare(
+    "SELECT * FROM title_variants WHERE id = ?"
+  ).bind(variantId).first()
+  if (!variant) return c.json({ error: '변형을 찾을 수 없습니다' }, 404)
+  
+  // 모든 변형 비활성화 후 선택한 것만 활성화
+  await c.env.DB.prepare(
+    "UPDATE title_variants SET is_active = 0 WHERE content_id = ?"
+  ).bind(variant.content_id).run()
+  
+  await c.env.DB.prepare(
+    "UPDATE title_variants SET is_active = 1, activated_at = datetime('now') WHERE id = ?"
+  ).bind(variantId).run()
+  
+  // contents 테이블도 업데이트
+  await c.env.DB.prepare(
+    "UPDATE contents SET title = ?, updated_at = datetime('now') WHERE id = ?"
+  ).bind(variant.title, variant.content_id).run()
+  
+  // Inblog 제목 변경 시도
+  let inblogResult = null
+  const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = inblogKeyRow?.value as string || ''
+  
+  if (inblogApiKey) {
+    const publishLog: any = await c.env.DB.prepare(
+      "SELECT inblog_post_id FROM publish_logs WHERE content_id = ? AND status = 'published' AND inblog_post_id IS NOT NULL LIMIT 1"
+    ).bind(variant.content_id).first()
+    
+    if (publishLog?.inblog_post_id) {
+      try {
+        const r = await fetch(`https://inblog.ai/api/v1/posts/${publishLog.inblog_post_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/vnd.api+json', 'Authorization': `Bearer ${inblogApiKey}`, 'Accept': 'application/vnd.api+json' },
+          body: JSON.stringify({ jsonapi: { version: '1.0' }, data: { type: 'posts', id: publishLog.inblog_post_id, attributes: { title: variant.title } } })
+        })
+        inblogResult = { synced: r.ok, status: r.status }
+      } catch (e: any) {
+        inblogResult = { synced: false, error: e.message }
+      }
+    }
+  }
+  
+  return c.json({
+    message: `변형 ${variant.variant_label} 활성화 완료`,
+    variant,
+    inblog_sync: inblogResult
+  })
+})
+
+// POST /api/enhancements/ab-test/record — CTR 데이터 기록
+enhancementRoutes.post('/ab-test/record', async (c) => {
+  const body = await c.req.json()
+  const variantId = (body as any).variant_id
+  const impressions = (body as any).impressions || 0
+  const clicks = (body as any).clicks || 0
+  
+  if (!variantId) return c.json({ error: 'variant_id 필요' }, 400)
+  
+  await c.env.DB.prepare(
+    `UPDATE title_variants SET 
+     impressions = impressions + ?, 
+     clicks = clicks + ?,
+     ctr = CASE WHEN (impressions + ?) > 0 THEN CAST((clicks + ?) AS REAL) / (impressions + ?) ELSE 0 END
+     WHERE id = ?`
+  ).bind(impressions, clicks, impressions, clicks, impressions, variantId).run()
+  
+  return c.json({ success: true })
+})
+
+// GET /api/enhancements/ab-test/results — 전체 A/B 테스트 결과
+enhancementRoutes.get('/ab-test/results', async (c) => {
+  const contentId = c.req.query('content_id')
+  
+  let query = `SELECT tv.*, c.keyword_text, c.slug 
+               FROM title_variants tv
+               JOIN contents c ON tv.content_id = c.id`
+  if (contentId) query += ` WHERE tv.content_id = ${parseInt(contentId)}`
+  query += ` ORDER BY tv.content_id, tv.variant_label`
+  
+  const variants = await c.env.DB.prepare(query).all()
+  
+  // 콘텐츠별 그룹핑
+  const grouped: Record<number, any> = {}
+  for (const v of (variants.results || []) as any[]) {
+    if (!grouped[v.content_id]) {
+      grouped[v.content_id] = { content_id: v.content_id, keyword: v.keyword_text, slug: v.slug, variants: [], winner: null }
+    }
+    grouped[v.content_id].variants.push(v)
+  }
+  
+  // 승자 판정 (최소 100 노출 + 가장 높은 CTR)
+  for (const g of Object.values(grouped)) {
+    const qualified = g.variants.filter((v: any) => v.impressions >= 100)
+    if (qualified.length >= 2) {
+      qualified.sort((a: any, b: any) => b.ctr - a.ctr)
+      g.winner = { variant_id: qualified[0].id, label: qualified[0].variant_label, ctr: qualified[0].ctr, title: qualified[0].title }
+    }
+  }
+  
+  return c.json({ 
+    total_tests: Object.keys(grouped).length,
+    tests: Object.values(grouped)
+  })
+})
+
+// GET /api/enhancements/ab-test/list — A/B 테스트 대상 콘텐츠 목록
+enhancementRoutes.get('/ab-test/list', async (c) => {
+  const contents = await c.env.DB.prepare(
+    `SELECT c.id, c.title, c.keyword_text, c.seo_score, c.slug,
+            (SELECT COUNT(*) FROM title_variants tv WHERE tv.content_id = c.id) as variant_count
+     FROM contents c WHERE c.status = 'published' ORDER BY c.id DESC`
+  ).all()
+  return c.json({ contents: contents.results || [] })
+})
+
+
+// ======================================================================
+// 14. 환자 질문 크롤링 시스템 (네이버 지식iN + Google PAA)
+// ======================================================================
+
+// POST /api/enhancements/patient-questions/crawl — 환자 질문 수집
+enhancementRoutes.post('/patient-questions/crawl', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const keywords: string[] = (body as any).keywords || []
+  const source = (body as any).source || 'naver_kin'
+  
+  // 키워드 미지정 시 DB에서 주요 카테고리별 키워드 가져오기
+  let searchKeywords = keywords
+  if (searchKeywords.length === 0) {
+    const dbKeywords = await c.env.DB.prepare(
+      `SELECT keyword, category FROM keywords 
+       WHERE is_active = 1 
+       GROUP BY category 
+       ORDER BY RANDOM() LIMIT 10`
+    ).all()
+    searchKeywords = (dbKeywords.results || []).map((k: any) => k.keyword)
+  }
+  
+  const allQuestions: any[] = []
+  
+  for (const kw of searchKeywords.slice(0, 10)) {
+    try {
+      if (source === 'naver_kin' || source === 'all') {
+        // 네이버 지식iN 검색 (API 없이 웹 검색 결과 활용)
+        const naverUrl = `https://search.naver.com/search.naver?where=kin&query=${encodeURIComponent(kw + ' 치과')}&sm=tab_opt&sort=0`
+        
+        try {
+          const resp = await fetch(naverUrl, {
+            headers: { 
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Accept-Language': 'ko-KR,ko;q=0.9'
+            }
+          })
+          const html = await resp.text()
+          
+          // 질문 제목 추출 (간단한 파싱)
+          const titleRegex = /<a[^>]*class="[^"]*question_text[^"]*"[^>]*>(.*?)<\/a>/gi
+          const altTitleRegex = /<a[^>]*title="([^"]*)"[^>]*class="[^"]*_title[^"]*"/gi
+          
+          let match
+          while ((match = titleRegex.exec(html)) !== null) {
+            const question = match[1].replace(/<[^>]*>/g, '').trim()
+            if (question.length > 10 && question.length < 200) {
+              allQuestions.push({
+                source: 'naver_kin',
+                query: kw,
+                question,
+                category: await categorizeQuestion(question),
+                relevance_score: calculateQuestionRelevance(question, kw)
+              })
+            }
+          }
+          while ((match = altTitleRegex.exec(html)) !== null) {
+            const question = match[1].replace(/<[^>]*>/g, '').trim()
+            if (question.length > 10 && question.length < 200 && !allQuestions.some(q => q.question === question)) {
+              allQuestions.push({
+                source: 'naver_kin',
+                query: kw,
+                question,
+                category: await categorizeQuestion(question),
+                relevance_score: calculateQuestionRelevance(question, kw)
+              })
+            }
+          }
+        } catch (fetchErr: any) {
+          console.warn(`네이버 크롤링 실패 (${kw}):`, fetchErr.message)
+        }
+      }
+      
+      if (source === 'google_paa' || source === 'all') {
+        // Google "People Also Ask" 시뮬레이션
+        // (실제로는 SerpAPI 등을 쓰지만, 여기선 키워드 기반 질문 생성)
+        const paaPatterns = [
+          `${kw} 비용이 얼마나 드나요?`,
+          `${kw} 기간은 얼마나 걸리나요?`,
+          `${kw} 아프지 않나요?`,
+          `${kw} 후에 주의할 점은?`,
+          `${kw} 부작용은 없나요?`,
+          `${kw} 언제 해야 하나요?`,
+          `${kw} vs 다른 치료 차이점은?`
+        ]
+        
+        for (const q of paaPatterns) {
+          allQuestions.push({
+            source: 'google_paa',
+            query: kw,
+            question: q,
+            category: await categorizeQuestion(q),
+            relevance_score: calculateQuestionRelevance(q, kw)
+          })
+        }
+      }
+    } catch (err: any) {
+      console.error(`질문 크롤링 실패 (${kw}):`, err.message)
+    }
+  }
+  
+  // 중복 제거 + 관련성 높은 순 정렬
+  const uniqueQuestions = allQuestions
+    .filter((q, i, arr) => arr.findIndex(a => a.question === q.question) === i)
+    .sort((a, b) => b.relevance_score - a.relevance_score)
+    .slice(0, 100)
+  
+  // DB 저장
+  let saved = 0
+  for (const q of uniqueQuestions) {
+    try {
+      // 중복 확인
+      const exists = await c.env.DB.prepare(
+        "SELECT id FROM patient_questions WHERE question = ?"
+      ).bind(q.question).first()
+      
+      if (!exists) {
+        await c.env.DB.prepare(
+          "INSERT INTO patient_questions (source, query, question, category, relevance_score) VALUES (?, ?, ?, ?, ?)"
+        ).bind(q.source, q.query, q.question, q.category, q.relevance_score).run()
+        saved++
+      }
+    } catch { /* 중복 무시 */ }
+  }
+  
+  return c.json({
+    message: `환자 질문 ${saved}건 수집 완료`,
+    source,
+    searched_keywords: searchKeywords.slice(0, 10),
+    total_found: allQuestions.length,
+    unique_saved: saved,
+    top_questions: uniqueQuestions.slice(0, 20).map(q => ({
+      question: q.question,
+      source: q.source,
+      category: q.category,
+      relevance: Math.round(q.relevance_score * 100)
+    }))
+  })
+})
+
+// GET /api/enhancements/patient-questions — 수집된 질문 목록
+enhancementRoutes.get('/patient-questions', async (c) => {
+  const category = c.req.query('category')
+  const unused = c.req.query('unused') === 'true'
+  
+  let query = "SELECT * FROM patient_questions WHERE 1=1"
+  const binds: any[] = []
+  if (category) { query += " AND category = ?"; binds.push(category) }
+  if (unused) { query += " AND is_used = 0" }
+  query += " ORDER BY relevance_score DESC, crawled_at DESC LIMIT 100"
+  
+  let stmt = c.env.DB.prepare(query)
+  if (binds.length > 0) stmt = stmt.bind(...binds)
+  const questions = await stmt.all()
+  
+  // 카테고리별 통계
+  const stats = await c.env.DB.prepare(
+    "SELECT category, COUNT(*) as count, SUM(CASE WHEN is_used = 0 THEN 1 ELSE 0 END) as unused_count FROM patient_questions GROUP BY category"
+  ).all()
+  
+  return c.json({
+    total: (questions.results || []).length,
+    category_stats: stats.results || [],
+    questions: questions.results || []
+  })
+})
+
+// POST /api/enhancements/patient-questions/to-keywords — 질문을 키워드 DB에 반영
+enhancementRoutes.post('/patient-questions/to-keywords', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const questionIds: number[] = (body as any).question_ids || []
+  const autoSelect = (body as any).auto_select || false
+  
+  let questions: any[]
+  if (autoSelect) {
+    // 관련성 높고 미사용인 질문 자동 선택
+    const result = await c.env.DB.prepare(
+      "SELECT * FROM patient_questions WHERE is_used = 0 ORDER BY relevance_score DESC LIMIT 20"
+    ).all()
+    questions = (result.results || []) as any[]
+  } else if (questionIds.length > 0) {
+    const result = await c.env.DB.prepare(
+      `SELECT * FROM patient_questions WHERE id IN (${questionIds.join(',')}) AND is_used = 0`
+    ).all()
+    questions = (result.results || []) as any[]
+  } else {
+    return c.json({ error: 'question_ids 또는 auto_select 필요' }, 400)
+  }
+  
+  let added = 0, skipped = 0
+  for (const q of questions) {
+    // 질문에서 핵심 키워드 추출 (불필요한 부분 제거)
+    let keyword = q.question
+      .replace(/\?|？|~|!|。/g, '')
+      .replace(/^(.*?)(이|가|은|는|을|를)\s*(어떻게|얼마나|왜|언제|어디서)/g, '$1')
+      .trim()
+    
+    // 이미 존재하는 키워드인지 확인
+    const existing = await c.env.DB.prepare(
+      "SELECT id FROM keywords WHERE keyword = ? OR keyword LIKE ?"
+    ).bind(keyword, `%${keyword.substring(0, 10)}%`).first()
+    
+    if (!existing && keyword.length >= 4) {
+      await c.env.DB.prepare(
+        "INSERT INTO keywords (keyword, category, priority, source, is_active) VALUES (?, ?, 5, 'patient_question', 1)"
+      ).bind(keyword, q.category || 'general').run()
+      
+      await c.env.DB.prepare(
+        "UPDATE patient_questions SET is_used = 1, keyword_match = ? WHERE id = ?"
+      ).bind(keyword, q.id).run()
+      added++
+    } else {
+      skipped++
+      // 매칭되더라도 사용 처리
+      await c.env.DB.prepare("UPDATE patient_questions SET is_used = 1 WHERE id = ?").bind(q.id).run()
+    }
+  }
+  
+  return c.json({
+    message: `${added}개 키워드 추가, ${skipped}개 중복/제외`,
+    added,
+    skipped,
+    total_processed: questions.length
+  })
+})
+
+// 질문 카테고리 자동 분류
+async function categorizeQuestion(question: string): Promise<string> {
+  const q = question.toLowerCase()
+  if (/임플란트|뼈이식|식립|임프란트/.test(q)) return 'implant'
+  if (/교정|투명|돌출|부정교합|브라켓/.test(q)) return 'orthodontics'
+  if (/예방|양치|치실|스케일링|불소|검진/.test(q)) return 'prevention'
+  if (/충치|신경치료|크라운|사랑니|발치|미백|라미네이트|잇몸/.test(q)) return 'general'
+  return 'general'
+}
+
+// 질문-키워드 관련성 점수 계산
+function calculateQuestionRelevance(question: string, keyword: string): number {
+  const q = question.toLowerCase()
+  const kw = keyword.toLowerCase()
+  
+  let score = 0
+  // 키워드 직접 포함
+  if (q.includes(kw)) score += 0.5
+  // 단어별 매칭
+  const kwWords = kw.split(/\s+/)
+  const matchedWords = kwWords.filter(w => q.includes(w))
+  score += (matchedWords.length / kwWords.length) * 0.3
+  // 치과 관련 키워드 보너스
+  if (/치과|치아|치료|통증|아프|수술|비용|기간|회복/.test(q)) score += 0.1
+  // 질문 형태 보너스 (실제 환자 질문 패턴)
+  if (/\?|인가요|일까요|해야|할까|나요|되나요|않나요/.test(q)) score += 0.1
+  
+  return Math.min(1.0, score)
+}
+
+
 export { 
   enhancementRoutes, 
   generateFaqSchema, 
@@ -1305,5 +2112,8 @@ export {
   injectSchemaToHtml, 
   insertInternalLinks, 
   keywordSimilarity,
-  sendNotification
+  sendNotification,
+  injectToc,
+  injectCta,
+  buildCtaHtml
 }

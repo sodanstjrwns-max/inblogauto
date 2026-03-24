@@ -1522,6 +1522,55 @@ function getIndexHtml(): string {
             <button onclick="sendDailyReport()" class="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg text-sm hover:bg-indigo-200"><i class="fas fa-chart-line mr-1"></i>\uc77c\uc77c \ub9ac\ud3ec\ud2b8</button>
           </div>
         </div>
+
+        <!-- 11. 사이트맵 자동 제출 -->
+        <div class="card p-6 mt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-sitemap text-green-600 mr-2"></i>11. 사이트맵 자동 제출</h3>
+            <div class="flex gap-2">
+              <a href="/api/enhancements/sitemap.xml" target="_blank" class="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-xs hover:bg-gray-200"><i class="fas fa-external-link-alt mr-1"></i>미리보기</a>
+              <button onclick="submitSitemap()" class="bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-green-700"><i class="fas fa-paper-plane mr-1"></i>Google/Bing/Naver 제출</button>
+            </div>
+          </div>
+          <div id="sitemap-result" class="text-sm text-gray-500">사이트맵을 주요 검색엔진(Google, Bing, Naver)에 제출하여 색인 속도를 높입니다.</div>
+        </div>
+
+        <!-- 12. 레트로핏 (기존 글 개선) -->
+        <div class="card p-6 mt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-wrench text-orange-500 mr-2"></i>12. 기존 글 레트로핏</h3>
+            <div class="flex gap-2">
+              <button onclick="runRetrofit(true)" class="bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg text-xs hover:bg-orange-200"><i class="fas fa-eye mr-1"></i>미리보기</button>
+              <button onclick="runRetrofit(false)" class="bg-orange-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-orange-700"><i class="fas fa-magic mr-1"></i>실행</button>
+              <button onclick="runRetrofit(false, true)" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-red-700"><i class="fas fa-sync mr-1"></i>실행+Inblog 동기화</button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mb-3">기존 발행 글에 TOC(목차), CTA(액션유도), Schema, 내부링크를 소급 적용합니다.</p>
+          <div id="retrofit-result" class="text-sm text-gray-500">위 버튼을 눌러 기존 글을 일괄 개선하세요.</div>
+        </div>
+
+        <!-- 13. A/B 타이틀 테스팅 -->
+        <div class="card p-6 mt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-flask text-indigo-500 mr-2"></i>13. A/B 타이틀 테스팅</h3>
+            <button onclick="loadAbTests()" class="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs hover:bg-indigo-200"><i class="fas fa-list mr-1"></i>현황 확인</button>
+          </div>
+          <div id="ab-test-result" class="text-sm text-gray-500">발행된 글의 제목 A/B 테스트를 실행하여 CTR이 가장 높은 제목을 찾습니다.</div>
+        </div>
+
+        <!-- 14. 환자 질문 크롤링 -->
+        <div class="card p-6 mt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-comments text-teal-500 mr-2"></i>14. 환자 질문 크롤링</h3>
+            <div class="flex gap-2">
+              <button onclick="crawlPatientQuestions()" class="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-teal-700"><i class="fas fa-search mr-1"></i>질문 수집</button>
+              <button onclick="viewPatientQuestions()" class="bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs hover:bg-teal-200"><i class="fas fa-list mr-1"></i>목록</button>
+              <button onclick="convertQuestionsToKeywords()" class="bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg text-xs hover:bg-teal-200"><i class="fas fa-arrow-right mr-1"></i>키워드 변환</button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mb-3">네이버 지식iN, Google PAA에서 실제 환자 질문을 수집하여 키워드 DB에 반영합니다.</p>
+          <div id="patient-questions-result" class="text-sm text-gray-500">위 버튼을 눌러 환자들이 실제로 궁금해하는 질문을 수집하세요.</div>
+        </div>
       \`;
       
       // \uc54c\ub9bc URL \ub85c\ub4dc
@@ -1679,6 +1728,162 @@ function getIndexHtml(): string {
         showToast(res.message);
         loadSeasonalKeywords();
       } catch(e) { showToast('\uc2e4\ud328: ' + e.message, 'error'); }
+    }
+
+    // ===== 개선 11: 사이트맵 자동 제출 =====
+    async function submitSitemap() {
+      const el = document.getElementById('sitemap-result');
+      el.innerHTML = '<div class="spinner"></div> 검색엔진에 사이트맵 제출 중...';
+      try {
+        const res = await api('/enhancements/sitemap/submit', { method: 'POST' });
+        let html = '<div class="space-y-2">';
+        res.results.forEach(function(r) {
+          const icon = r.ok || r.status === 'submitted' ? '✅' : r.status === 'skipped' ? '⏭️' : '❌';
+          html += '<div class="flex items-center gap-2 text-sm">' + icon + ' <strong>' + r.engine + '</strong>';
+          if (r.status_code) html += ' (HTTP ' + r.status_code + ')';
+          if (r.reason) html += ' — ' + r.reason;
+          html += '</div>';
+        });
+        html += '</div>';
+        html += '<div class="mt-2 text-xs text-gray-400">사이트맵 URL: ' + res.sitemap_url + '</div>';
+        el.innerHTML = html;
+        showToast('사이트맵 제출 완료!');
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    // ===== 개선 12: 레트로핏 =====
+    async function runRetrofit(dryRun, updateInblog) {
+      const el = document.getElementById('retrofit-result');
+      el.innerHTML = '<div class="spinner"></div> 레트로핏 ' + (dryRun ? '미리보기' : '실행') + ' 중...';
+      try {
+        const res = await api('/enhancements/retrofit', { 
+          method: 'POST', 
+          body: JSON.stringify({ dry_run: dryRun || false, update_inblog: updateInblog || false }) 
+        });
+        let html = '<div class="p-3 bg-' + (dryRun ? 'blue' : 'green') + '-50 rounded-lg mb-3">';
+        html += '<div class="font-medium">' + res.message + (dryRun ? ' (미리보기)' : '') + '</div>';
+        html += '<div class="text-xs mt-1">검사: ' + res.total_checked + '건 | TOC: +' + res.toc_added + ' | CTA: +' + res.cta_added + ' | Schema: +' + res.schema_added + '</div>';
+        if (res.inblog_sync) html += '<div class="text-xs">Inblog 동기화: ' + res.inblog_sync.synced + '건 성공, ' + res.inblog_sync.failed + '건 실패</div>';
+        html += '</div>';
+        if (res.details && res.details.length > 0) {
+          html += '<div class="space-y-1">';
+          res.details.forEach(function(d) {
+            html += '<div class="text-xs p-1.5 bg-gray-50 rounded">ID' + d.id + ': ' + d.title + '... → ' + d.changes.join(', ') + '</div>';
+          });
+          html += '</div>';
+        }
+        el.innerHTML = html;
+        if (!dryRun) showToast(res.message);
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    // ===== 개선 13: A/B 타이틀 테스팅 =====
+    async function loadAbTests() {
+      const el = document.getElementById('ab-test-result');
+      el.innerHTML = '<div class="spinner"></div> A/B 테스트 현황 로드 중...';
+      try {
+        const list = await api('/enhancements/ab-test/list');
+        const contents = list.contents || [];
+        let html = '<div class="space-y-2">';
+        
+        if (contents.length === 0) {
+          html += '<div class="text-gray-400">발행된 글이 없습니다.</div>';
+        } else {
+          html += '<div class="max-h-60 overflow-y-auto space-y-1">';
+          contents.forEach(function(c) {
+            const hasTest = c.variant_count > 0;
+            html += '<div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg">';
+            html += '<div class="flex-1 min-w-0"><div class="text-sm truncate">' + c.title.substring(0, 45) + '...</div>';
+            html += '<div class="text-xs text-gray-400">SEO ' + c.seo_score + ' | ' + c.keyword_text + '</div></div>';
+            if (hasTest) {
+              html += '<span class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full ml-2">' + c.variant_count + '개 변형</span>';
+            } else {
+              html += '<button onclick="generateAbVariants(' + c.id + ')" class="text-xs bg-indigo-600 text-white px-2 py-1 rounded-lg ml-2 hover:bg-indigo-700">생성</button>';
+            }
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    async function generateAbVariants(contentId) {
+      showToast('타이틀 변형 생성 중...', 'info');
+      try {
+        const res = await api('/enhancements/ab-test/generate', { method: 'POST', body: JSON.stringify({ content_id: contentId }) });
+        showToast(res.message);
+        loadAbTests();
+      } catch(e) { showToast('실패: ' + e.message, 'error'); }
+    }
+
+    async function activateVariant(variantId) {
+      if (!confirm('이 타이틀 변형을 활성화하시겠습니까? Inblog 제목도 변경됩니다.')) return;
+      try {
+        const res = await api('/enhancements/ab-test/activate', { method: 'POST', body: JSON.stringify({ variant_id: variantId }) });
+        showToast(res.message);
+        loadAbTests();
+      } catch(e) { showToast('실패: ' + e.message, 'error'); }
+    }
+
+    // ===== 개선 14: 환자 질문 크롤링 =====
+    async function crawlPatientQuestions() {
+      const el = document.getElementById('patient-questions-result');
+      el.innerHTML = '<div class="spinner"></div> 환자 질문 수집 중... (30초~1분 소요)';
+      try {
+        const res = await api('/enhancements/patient-questions/crawl', { method: 'POST', body: JSON.stringify({ source: 'all' }) });
+        let html = '<div class="p-3 bg-teal-50 rounded-lg mb-3">';
+        html += '<div class="font-medium">' + res.message + '</div>';
+        html += '<div class="text-xs mt-1">검색: ' + res.searched_keywords.slice(0, 5).join(', ') + ' 등 ' + res.searched_keywords.length + '개</div>';
+        html += '</div>';
+        if (res.top_questions && res.top_questions.length > 0) {
+          html += '<div class="space-y-1 max-h-48 overflow-y-auto">';
+          res.top_questions.slice(0, 10).forEach(function(q) {
+            html += '<div class="flex items-center gap-2 text-xs p-1.5 bg-gray-50 rounded">';
+            html += '<span class="text-teal-600 font-medium">[' + q.source + ']</span>';
+            html += '<span class="flex-1 truncate">' + q.question + '</span>';
+            html += '<span class="text-gray-400">' + q.relevance + '%</span>';
+            html += '</div>';
+          });
+          html += '</div>';
+        }
+        el.innerHTML = html;
+        showToast(res.message);
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    async function viewPatientQuestions() {
+      const el = document.getElementById('patient-questions-result');
+      el.innerHTML = '<div class="spinner"></div> 로드 중...';
+      try {
+        const res = await api('/enhancements/patient-questions?unused=true');
+        let html = '<div class="mb-3">';
+        (res.category_stats || []).forEach(function(s) {
+          html += '<span class="inline-block bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs mr-1">' + s.category + ': ' + s.count + '개 (미사용 ' + s.unused_count + ')</span>';
+        });
+        html += '</div>';
+        html += '<div class="space-y-1 max-h-60 overflow-y-auto">';
+        (res.questions || []).slice(0, 20).forEach(function(q) {
+          html += '<div class="flex items-center gap-2 text-xs p-1.5 bg-gray-50 rounded">';
+          html += '<span class="text-teal-600">[' + q.category + ']</span>';
+          html += '<span class="flex-1 truncate">' + q.question + '</span>';
+          html += '<span class="text-gray-400">' + Math.round(q.relevance_score * 100) + '%</span>';
+          html += '</div>';
+        });
+        html += '</div>';
+        el.innerHTML = html;
+      } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
+    }
+
+    async function convertQuestionsToKeywords() {
+      if (!confirm('관련성 높은 질문들을 키워드 DB에 자동 추가합니다. 계속?')) return;
+      showToast('키워드 변환 중...', 'info');
+      try {
+        const res = await api('/enhancements/patient-questions/to-keywords', { method: 'POST', body: JSON.stringify({ auto_select: true }) });
+        showToast(res.message);
+        viewPatientQuestions();
+      } catch(e) { showToast('실패: ' + e.message, 'error'); }
     }
 
     // ===== Settings =====
