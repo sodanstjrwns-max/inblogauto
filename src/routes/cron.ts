@@ -185,9 +185,33 @@ cronApp.post('/', async (c) => {
 
   // 차단 키워드 필터 (비용/보험 + 후기/추천 + 쓰레기 키워드)
   const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|후기|리뷰|맛집|환절기|황사|알레르기|구내염|마스크\s*구취/
-  
-  for (const [cat, weight] of Object.entries(categoryWeights)) {
-    const catCount = Math.max(0, Math.round(count * ((weight as number) / (totalWeight as number))))
+
+  // ===== 가중치 기반 카테고리 할당 (count가 작을 때도 정확히 동작) =====
+  // Largest Remainder Method: 소수점 이하를 버리지 않고, 나머지가 큰 순서대로 1개씩 배분
+  const catEntries = Object.entries(categoryWeights)
+  const rawShares = catEntries.map(([cat, w]) => ({
+    cat,
+    raw: count * ((w as number) / totalWeight),
+    floor: Math.floor(count * ((w as number) / totalWeight)),
+    remainder: (count * ((w as number) / totalWeight)) % 1
+  }))
+  let allocated = rawShares.reduce((s, r) => s + r.floor, 0)
+  // 나머지가 큰 순서로 +1씩 배분
+  rawShares.sort((a, b) => b.remainder - a.remainder)
+  for (const share of rawShares) {
+    if (allocated >= count) break
+    if (share.remainder > 0) {
+      share.floor += 1
+      allocated += 1
+    }
+  }
+  // 그래도 부족하면 (count=1인데 모든 remainder가 0인 극단적 경우) 가중치 최대 카테고리에 1 배분
+  if (allocated < count) {
+    const maxCat = rawShares.reduce((a, b) => (categoryWeights[a.cat] > categoryWeights[b.cat] ? a : b))
+    maxCat.floor += (count - allocated)
+  }
+
+  for (const { cat, floor: catCount } of rawShares) {
     if (catCount === 0) continue
 
     // 우선: 아직 콘텐츠가 없는 키워드 (비용/보험 키워드 제외)
