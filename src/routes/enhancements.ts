@@ -585,8 +585,13 @@ enhancementRoutes.post('/check-duplicate', async (c) => {
 
 
 // ======================================================================
-// 8. 알림 시스템 (슬랙 Webhook + 이메일)
+// 8. 알림 시스템 (슬랙 Webhook + 이메일 + 텔레그램)
 // ======================================================================
+
+// Telegram MarkdownV2 이스케이프 헬퍼
+function escapeMarkdown(text: string): string {
+  return text.replace(/([_\[\]()~`>#+\-=|{}.!\\])/g, '\\$1')
+}
 
 interface NotificationPayload {
   type: 'publish_success' | 'publish_failed' | 'cron_complete' | 'backfill' | 'error' | 'daily_report'
@@ -608,6 +613,12 @@ async function sendNotification(db: D1Database, payload: NotificationPayload): P
     // 이메일 Webhook URL (Zapier/Make/IFTTT 등)
     const emailRow = await db.prepare("SELECT value FROM settings WHERE key = 'email_webhook_url'").first()
     const emailWebhookUrl = emailRow?.value as string || ''
+
+    // 텔레그램 봇 설정
+    const tgBotRow = await db.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").first()
+    const tgChatRow = await db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").first()
+    const telegramBotToken = tgBotRow?.value as string || ''
+    const telegramChatId = tgChatRow?.value as string || ''
     
     // 알림 활성화 여부
     const notifRow = await db.prepare("SELECT value FROM settings WHERE key = 'notifications_enabled'").first()
@@ -616,6 +627,53 @@ async function sendNotification(db: D1Database, payload: NotificationPayload): P
     if (!enabled) return
     
     const promises: Promise<any>[] = []
+
+    // 텔레그램 알림
+    if (telegramBotToken && telegramChatId) {
+      const emoji = payload.type === 'publish_success' ? '✅' : 
+                     payload.type === 'publish_failed' ? '❌' : 
+                     payload.type === 'cron_complete' ? '🤖' :
+                     payload.type === 'backfill' ? '🔗' :
+                     payload.type === 'daily_report' ? '📊' : '⚠️'
+
+      let text = `${emoji} *${escapeMarkdown(payload.title)}*\n\n${escapeMarkdown(payload.message)}`
+      
+      // 상세 정보 추가
+      if (payload.details && Array.isArray(payload.details)) {
+        const detailLines = payload.details.slice(0, 5).map((d: any) => {
+          if (d.keyword && d.seo_score) return `• ${d.keyword} \\(SEO: ${d.seo_score}\\) ${d.status === 'published' ? '✅' : d.status === 'failed' ? '❌' : '📝'}`
+          return `• ${escapeMarkdown(JSON.stringify(d).substring(0, 60))}`
+        }).join('\n')
+        text += `\n\n${detailLines}`
+      }
+
+      if (payload.url) {
+        text += `\n\n[🔗 자세히 보기](${payload.url})`
+      }
+
+      // KST 시간 추가
+      const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+      const timeStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')} ${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`
+      text += `\n\n_${escapeMarkdown(timeStr)} KST_`
+
+      promises.push(
+        fetch(`https://api.telegram.org/bot${telegramBotToken}/sendMessage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: telegramChatId,
+            text,
+            parse_mode: 'MarkdownV2',
+            disable_web_page_preview: false
+          })
+        }).then(async (r) => {
+          if (!r.ok) {
+            const err = await r.text()
+            console.error('텔레그램 알림 실패:', r.status, err)
+          }
+        }).catch(e => console.error('텔레그램 알림 오류:', e.message))
+      )
+    }
     
     // 슬랙 알림
     if (slackWebhookUrl && slackWebhookUrl.startsWith('https://')) {
@@ -711,13 +769,130 @@ enhancementRoutes.post('/test-notification', async (c) => {
 enhancementRoutes.get('/notification-status', async (c) => {
   const slack = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'slack_webhook_url'").first()
   const email = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'email_webhook_url'").first()
+  const tgBot = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'telegram_bot_token'").first()
+  const tgChat = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").first()
   const enabled = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'notifications_enabled'").first()
   
   return c.json({
     notifications_enabled: (enabled?.value || 'true') !== 'false',
     slack_configured: !!(slack?.value),
-    email_configured: !!(email?.value)
+    email_configured: !!(email?.value),
+    telegram_configured: !!(tgBot?.value && tgChat?.value)
   })
+})
+
+// POST /api/enhancements/telegram/setup — 텔레그램 봇 설정
+enhancementRoutes.post('/telegram/setup', async (c) => {
+  const { bot_token, chat_id } = await c.req.json()
+  
+  if (!bot_token || !chat_id) {
+    return c.json({ error: 'bot_token과 chat_id가 필요합니다.' }, 400)
+  }
+
+  // 텔레그램 봇 유효성 검증
+  try {
+    const verifyRes = await fetch(`https://api.telegram.org/bot${bot_token}/getMe`)
+    const verifyData: any = await verifyRes.json()
+    if (!verifyData.ok) {
+      return c.json({ error: '유효하지 않은 봇 토큰입니다.', detail: verifyData.description }, 400)
+    }
+
+    // 설정 저장
+    await c.env.DB.prepare(
+      "INSERT OR REPLACE INTO settings (key, value, description) VALUES ('telegram_bot_token', ?, '텔레그램 봇 토큰')"
+    ).bind(bot_token).run()
+    await c.env.DB.prepare(
+      "INSERT OR REPLACE INTO settings (key, value, description) VALUES ('telegram_chat_id', ?, '텔레그램 채팅 ID')"
+    ).bind(String(chat_id)).run()
+
+    // 테스트 메시지 발송
+    const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+    const timeStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')} ${String(kst.getUTCHours()).padStart(2,'0')}:${String(kst.getUTCMinutes()).padStart(2,'0')}`
+    
+    await fetch(`https://api.telegram.org/bot${bot_token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id,
+        text: `✅ *InBlog Auto\\-Publish 알림 연결 완료\\!*\n\n이제부터 콘텐츠 발행 결과를 실시간으로 받아보실 수 있습니다\\.\n\n📊 발행 성공/실패 알림\n📋 일일 요약 리포트\n⚠️ 시스템 오류 알림\n\n_${escapeMarkdown(timeStr)} KST_`,
+        parse_mode: 'MarkdownV2'
+      })
+    })
+
+    return c.json({ 
+      success: true, 
+      bot_name: verifyData.result.first_name,
+      bot_username: verifyData.result.username,
+      message: `텔레그램 봇 @${verifyData.result.username} 연결 완료!`
+    })
+  } catch (e: any) {
+    return c.json({ error: '텔레그램 API 연결 실패', detail: e.message }, 500)
+  }
+})
+
+// POST /api/enhancements/daily-report — 일일 리포트 발송 (Cron에서 호출)
+enhancementRoutes.post('/daily-report', async (c) => {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const today = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`
+
+  // 오늘 발행 통계
+  const todayStats: any = await c.env.DB.prepare(
+    `SELECT 
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END) as published,
+      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+      ROUND(AVG(seo_score), 1) as avg_seo,
+      ROUND(AVG(word_count), 0) as avg_words
+    FROM contents 
+    WHERE DATE(created_at) = ?`
+  ).bind(today).first()
+
+  // 전체 통계
+  const totalStats: any = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total_published FROM contents WHERE status = 'published'`
+  ).first()
+
+  // 키워드 잔여량
+  const kwStats: any = await c.env.DB.prepare(
+    `SELECT COUNT(*) as active FROM keywords WHERE is_active = 1`
+  ).first()
+
+  // 오늘 발행된 글 목록
+  const todayPosts = await c.env.DB.prepare(
+    `SELECT c.title, c.seo_score, c.word_count, c.status, k.keyword, k.category
+     FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE DATE(c.created_at) = ?
+     ORDER BY c.created_at DESC`
+  ).bind(today).all()
+
+  const postsPerDay = 5
+  const kwDaysLeft = Math.floor((kwStats?.active || 0) / postsPerDay)
+
+  const message = [
+    `📅 ${today} 발행 리포트`,
+    ``,
+    `📝 오늘: ${todayStats?.published || 0}건 성공 / ${todayStats?.failed || 0}건 실패`,
+    `📊 평균 SEO: ${todayStats?.avg_seo || '-'}점 | 평균 글자수: ${todayStats?.avg_words || '-'}자`,
+    `📚 누적 발행: ${totalStats?.total_published || 0}건`,
+    `🔑 잔여 키워드: ${kwStats?.active || 0}개 (${kwDaysLeft}일분)`,
+  ].join('\n')
+
+  const details = ((todayPosts.results || []) as any[]).map((p: any) => ({
+    keyword: p.keyword || p.title,
+    seo_score: p.seo_score,
+    status: p.status,
+    category: p.category
+  }))
+
+  await sendNotification(c.env.DB, {
+    type: 'daily_report',
+    title: `📊 일일 발행 리포트 (${today})`,
+    message,
+    details,
+    url: 'https://inblogauto.pages.dev'
+  })
+
+  return c.json({ success: true, report: { today: todayStats, total: totalStats, keywords: kwStats } })
 })
 
 
@@ -888,6 +1063,240 @@ enhancementRoutes.post('/run-all', async (c) => {
 function escapeXml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 }
+
+// ======================================================================
+// 9. 토픽 클러스터 시스템 — 카테고리별 콘텐츠 맵 + 커버리지 분석
+// ======================================================================
+
+// 토픽 클러스터 정의 (카테고리 내 세부 토픽)
+const TOPIC_CLUSTERS: Record<string, { name: string; topics: string[] }> = {
+  implant: {
+    name: '임플란트',
+    topics: ['임플란트 수술', '임플란트 통증', '임플란트 가격/비용', '뼈이식', '임플란트 수명', '임플란트 관리', '임플란트 종류', '임플란트 실패', '임플란트 회복', '즉시 임플란트']
+  },
+  orthodontics: {
+    name: '교정',
+    topics: ['투명교정', '치아교정 기간', '교정 통증', '돌출입 교정', '부정교합', '교정 후 유지', '성인교정', '교정장치 종류', '교정 발치', '교정 비용']
+  },
+  general: {
+    name: '일반진료',
+    topics: ['충치 치료', '신경치료', '크라운', '사랑니', '치아 미백', '라미네이트', '잇몸 치료', '스케일링', '브릿지', '치아 파절']
+  },
+  prevention: {
+    name: '예방관리',
+    topics: ['구강위생', '치실/치간칫솔', '올바른 양치법', '정기검진', '불소도포', '어린이 치과', '임산부 치과', '구취', '이갈이', '치아 건강 식품']
+  },
+  local: {
+    name: '지역정보',
+    topics: ['천안', '아산', '대전', '세종', '청주', '당진', '서산', '공주', '보령', '논산']
+  }
+}
+
+// GET /api/enhancements/topic-clusters — 토픽 클러스터 맵
+enhancementRoutes.get('/topic-clusters', async (c) => {
+  // 모든 발행된 포스트를 카테고리별로 그룹핑
+  const posts = await c.env.DB.prepare(
+    `SELECT c.id, c.title, c.slug, c.seo_score, c.word_count, k.keyword, k.category
+     FROM contents c
+     LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status = 'published' AND c.is_live = 1
+     ORDER BY k.category, c.created_at DESC`
+  ).all()
+
+  const allPosts = (posts.results || []) as any[]
+  const clusters: Record<string, any> = {}
+
+  for (const [catKey, catDef] of Object.entries(TOPIC_CLUSTERS)) {
+    const catPosts = allPosts.filter(p => p.category === catKey)
+    
+    // 각 토픽별 커버리지 체크
+    const topicCoverage = catDef.topics.map(topic => {
+      const topicWords = topic.split(/[\/\s]+/).filter(w => w.length >= 2)
+      const matchingPosts = catPosts.filter(p => {
+        const kw = (p.keyword || '').toLowerCase()
+        const title = (p.title || '').toLowerCase()
+        return topicWords.some(tw => kw.includes(tw) || title.includes(tw))
+      })
+      return {
+        topic,
+        covered: matchingPosts.length > 0,
+        post_count: matchingPosts.length,
+        posts: matchingPosts.slice(0, 3).map((p: any) => ({ id: p.id, title: p.title, slug: p.slug, seo_score: p.seo_score }))
+      }
+    })
+
+    const coveredCount = topicCoverage.filter(t => t.covered).length
+    clusters[catKey] = {
+      name: catDef.name,
+      total_topics: catDef.topics.length,
+      covered_topics: coveredCount,
+      coverage_pct: Math.round((coveredCount / catDef.topics.length) * 100),
+      total_posts: catPosts.length,
+      avg_seo: catPosts.length > 0 ? Math.round(catPosts.reduce((s: number, p: any) => s + (p.seo_score || 0), 0) / catPosts.length) : 0,
+      topics: topicCoverage,
+      uncovered: topicCoverage.filter(t => !t.covered).map(t => t.topic)
+    }
+  }
+
+  // 전체 요약
+  const totalTopics = Object.values(clusters).reduce((s: number, c: any) => s + c.total_topics, 0)
+  const totalCovered = Object.values(clusters).reduce((s: number, c: any) => s + c.covered_topics, 0)
+
+  return c.json({
+    summary: {
+      total_topics: totalTopics,
+      covered_topics: totalCovered,
+      coverage_pct: Math.round((totalCovered / totalTopics) * 100),
+      total_posts: allPosts.length,
+      recommendation: totalCovered / totalTopics < 0.5 
+        ? '토픽 커버리지가 낮습니다. 미다룬 토픽 키워드를 우선 발행하세요.'
+        : totalCovered / totalTopics < 0.8
+        ? '커버리지가 양호합니다. 빈 토픽을 채워 Topical Authority를 강화하세요.'
+        : '훌륭한 커버리지! 기존 글의 품질 업그레이드와 상호링크 강화에 집중하세요.'
+    },
+    clusters
+  })
+})
+
+// GET /api/enhancements/topic-gaps — 미다룬 토픽 키워드 추천
+enhancementRoutes.get('/topic-gaps', async (c) => {
+  const posts = await c.env.DB.prepare(
+    `SELECT k.keyword, k.category FROM contents c
+     LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status = 'published'`
+  ).all()
+  const usedKeywords = new Set((posts.results || []).map((p: any) => p.keyword?.toLowerCase()))
+  
+  const gaps: any[] = []
+  for (const [catKey, catDef] of Object.entries(TOPIC_CLUSTERS)) {
+    for (const topic of catDef.topics) {
+      const topicWords = topic.split(/[\/\s]+/).filter(w => w.length >= 2)
+      const isCovered = [...usedKeywords].some(kw => topicWords.some(tw => kw?.includes(tw)))
+      if (!isCovered) {
+        // 해당 토픽의 활성 키워드 추천
+        const suggestions = await c.env.DB.prepare(
+          `SELECT id, keyword, priority FROM keywords 
+           WHERE is_active = 1 AND category = ? AND keyword LIKE ?
+           ORDER BY used_count ASC, priority DESC LIMIT 5`
+        ).bind(catKey, `%${topicWords[0]}%`).all()
+        
+        gaps.push({
+          category: catKey,
+          category_name: catDef.name,
+          topic,
+          priority: 'high',
+          suggested_keywords: (suggestions.results || []).map((s: any) => ({ id: s.id, keyword: s.keyword }))
+        })
+      }
+    }
+  }
+
+  return c.json({ 
+    total_gaps: gaps.length,
+    gaps: gaps.sort((a, b) => {
+      // implant > general > orthodontics > prevention > local 순서 우선
+      const catPriority: Record<string, number> = { implant: 5, general: 4, orthodontics: 3, prevention: 2, local: 1 }
+      return (catPriority[b.category] || 0) - (catPriority[a.category] || 0)
+    })
+  })
+})
+
+
+// ======================================================================
+// 10. 시즌별 키워드 자동 배치
+// ======================================================================
+
+const SEASONAL_KEYWORDS: Record<number, { season: string; keywords: string[] }> = {
+  1: { season: '겨울/신년', keywords: ['새해 치과 검진', '겨울 잇몸 관리', '건조한 입술 구강', '연말 치아미백', '치과 정기검진'] },
+  2: { season: '겨울/설날', keywords: ['설날 후 치통', '명절 치아 관리', '떡 치아 파절', '치과 예약', '봄 치아 준비'] },
+  3: { season: '봄', keywords: ['봄 스케일링', '환절기 잇몸', '꽃가루 구강 건강', '입학 전 교정', '봄 치과 검진'] },
+  4: { season: '봄', keywords: ['어린이날 치과', '봄 교정 상담', '치아 건강 식품', '구강건조증', '봄 임플란트'] },
+  5: { season: '초여름', keywords: ['여름 전 미백', '구취 관리', '치아 건강 음료', '교정 여름 관리', '임플란트 여름'] },
+  6: { season: '여름', keywords: ['여름 치통', '아이스크림 시린이', '여름 구강관리', '시린 이 원인', '여름 치과 휴진'] },
+  7: { season: '여름/방학', keywords: ['방학 교정 시작', '방학 치과 치료', '여름 사랑니', '교정 방학', '치아 건강 간식'] },
+  8: { season: '여름/가을준비', keywords: ['개학 전 치과', '가을 검진 준비', '교정 중 음식', '잇몸 출혈', '치석 제거'] },
+  9: { season: '가을', keywords: ['추석 치아 관리', '명절 음식 치아', '가을 스케일링', '환절기 구강', '교정 가을 관리'] },
+  10: { season: '가을', keywords: ['가을 임플란트', '연말 치료 계획', '치과 보험 활용', '연말 검진', '치아 건강 가을'] },
+  11: { season: '겨울준비', keywords: ['연말 치아미백', '겨울 잇몸 관리', '연말 치과 예약', '보험 혜택 연말', '임플란트 겨울'] },
+  12: { season: '겨울/연말', keywords: ['연말 치과 정산', '겨울 구강건조', '새해 교정 계획', '크리스마스 미백', '연말 건강검진'] }
+}
+
+// GET /api/enhancements/seasonal — 이번 달 시즌 키워드 추천
+enhancementRoutes.get('/seasonal', async (c) => {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const month = kst.getUTCMonth() + 1
+  const seasonal = SEASONAL_KEYWORDS[month] || { season: '일반', keywords: [] }
+  
+  // 이미 발행된 시즌 키워드 확인
+  const publishedKws = await c.env.DB.prepare(
+    `SELECT k.keyword FROM contents c 
+     LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status = 'published' 
+     AND strftime('%Y-%m', c.created_at) = strftime('%Y-%m', 'now')
+     AND k.keyword IS NOT NULL`
+  ).all()
+  const publishedSet = new Set((publishedKws.results || []).map((r: any) => r.keyword?.toLowerCase()))
+
+  // DB에서 시즌 관련 키워드 검색
+  const seasonalResults: any[] = []
+  for (const kw of seasonal.keywords) {
+    const searchWords = kw.split(/\s+/).filter(w => w.length >= 2)
+    if (searchWords.length === 0) continue
+    const matchResults = await c.env.DB.prepare(
+      `SELECT id, keyword, category, used_count FROM keywords 
+       WHERE is_active = 1 AND keyword LIKE ?
+       ORDER BY used_count ASC LIMIT 3`
+    ).bind(`%${searchWords[0]}%`).all()
+    
+    for (const r of (matchResults.results || []) as any[]) {
+      const isPublished = publishedSet.has(r.keyword?.toLowerCase())
+      seasonalResults.push({
+        suggested_topic: kw,
+        keyword_id: r.id,
+        keyword: r.keyword,
+        category: r.category,
+        used_count: r.used_count,
+        already_published_this_month: isPublished
+      })
+    }
+  }
+
+  return c.json({
+    month,
+    season: seasonal.season,
+    seasonal_topics: seasonal.keywords,
+    matching_keywords: seasonalResults.filter(r => !r.already_published_this_month),
+    already_published: seasonalResults.filter(r => r.already_published_this_month).length,
+    recommendation: `${month}월(${seasonal.season}) 시즌 키워드를 우선 배치하면 검색량 시즌 매칭 효과를 얻을 수 있습니다.`
+  })
+})
+
+// POST /api/enhancements/seasonal/apply — 시즌 키워드 우선순위 부스트
+enhancementRoutes.post('/seasonal/apply', async (c) => {
+  const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const month = kst.getUTCMonth() + 1
+  const seasonal = SEASONAL_KEYWORDS[month]
+  if (!seasonal) return c.json({ error: '시즌 데이터 없음' }, 404)
+
+  let boostedCount = 0
+  for (const topic of seasonal.keywords) {
+    const searchWords = topic.split(/\s+/).filter(w => w.length >= 2)
+    if (searchWords.length === 0) continue
+    const result = await c.env.DB.prepare(
+      `UPDATE keywords SET priority = MIN(priority + 2, 10) 
+       WHERE is_active = 1 AND keyword LIKE ? AND priority < 10`
+    ).bind(`%${searchWords[0]}%`).run()
+    boostedCount += result.meta.changes || 0
+  }
+
+  return c.json({ 
+    success: true, 
+    month, 
+    season: seasonal.season,
+    boosted_keywords: boostedCount,
+    message: `${boostedCount}개 시즌 키워드의 우선순위를 +2 부스트했습니다.`
+  })
+})
 
 export { 
   enhancementRoutes, 

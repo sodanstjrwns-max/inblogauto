@@ -40,6 +40,25 @@ export default {
     // ===== 3. 발행 시도 =====
     const result = await attemptPublish(APP_URL, CRON_SECRET, kstTime)
 
+    // ===== 3.5. 마지막 트리거 시 일일 리포트 발송 (KST 05:30 트리거) =====
+    if (kstHour >= 5 && kstMin >= 20) {
+      ctx.waitUntil((async () => {
+        try {
+          // 발행 완료 후 2분 대기 후 리포트 발송
+          await new Promise(resolve => setTimeout(resolve, 2 * 60 * 1000))
+          const reportRes = await fetch(`${APP_URL}/api/enhancements/daily-report`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          })
+          if (reportRes.ok) {
+            console.log(`[Cron] 일일 리포트 발송 완료`)
+          }
+        } catch (e) {
+          console.warn(`[Cron] 일일 리포트 발송 실패:`, e.message)
+        }
+      })())
+    }
+
     // ===== 4. 실패 시 자동 재시도 (30분 후 1회) =====
     if (!result.success) {
       console.log(`[Cron] KST ${kstTime} - 첫 시도 실패, 30분 후 재시도 예약`)

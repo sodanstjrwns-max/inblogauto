@@ -450,7 +450,50 @@ ${tocItems}</ol>
         console.log(`[TOC] 목차 ${tocH2Matches.length}개 항목 삽입 완료`)
       }
 
-      // DB 업데이트 (이미지 URL + 내부 링크 + Schema + TOC 포함 최종 HTML)
+      // === 3.8단계: 소프트 CTA 자동 삽입 (의료 면책 조항 바로 위) ===
+      const CTA_TEMPLATES = [
+        {
+          emoji: '💬',
+          heading: '이 글이 도움이 되셨나요?',
+          body: `${kw.keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 전문의와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
+          action: '📌 이 글을 저장해두시면 나중에 치과 방문 시 참고하실 수 있습니다.'
+        },
+        {
+          emoji: '🔖',
+          heading: '다음에 치과 방문하실 때 기억하세요',
+          body: `오늘 읽으신 ${kw.keyword} 정보를 바탕으로, 치과에서 "제 경우에는 어떤가요?"라고 한 번 물어보세요. 본인의 상황에 맞는 구체적인 답변을 받으실 수 있습니다.`,
+          action: '📌 궁금한 점을 미리 메모해서 가시면 상담이 훨씬 효율적입니다.'
+        },
+        {
+          emoji: '✅',
+          heading: '마지막으로 한 가지 더',
+          body: `${kw.keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 전문의와 직접 확인하시기 바랍니다.`,
+          action: '📌 주변에 같은 고민을 가진 분이 계시다면 이 글을 공유해주세요.'
+        }
+      ]
+      const ctaIndex = contentId % CTA_TEMPLATES.length
+      const cta = CTA_TEMPLATES[ctaIndex]
+      const ctaHtml = `\n<div style="background:linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%);border:1px solid #bae6fd;border-radius:12px;padding:24px 28px;margin:32px 0 24px 0">
+<p style="font-weight:700;font-size:17px;color:#0369a1;margin:0 0 12px 0">${cta.emoji} ${cta.heading}</p>
+<p style="font-size:15px;color:#334155;line-height:1.7;margin:0 0 12px 0">${cta.body}</p>
+<p style="font-size:14px;color:#0369a1;margin:0;font-weight:500">${cta.action}</p>
+</div>\n`
+      // 의료 면책 div 앞에 삽입
+      const disclaimerDivIdx = finalHtml.indexOf('<div style="background:#f0f7ff')
+      if (disclaimerDivIdx !== -1) {
+        finalHtml = finalHtml.slice(0, disclaimerDivIdx) + ctaHtml + finalHtml.slice(disclaimerDivIdx)
+      } else {
+        // 면책 div 없으면 schema script 앞에 삽입
+        const schemaIdx = finalHtml.indexOf('<script type="application/ld+json">')
+        if (schemaIdx !== -1) {
+          finalHtml = finalHtml.slice(0, schemaIdx) + ctaHtml + finalHtml.slice(schemaIdx)
+        } else {
+          finalHtml += ctaHtml
+        }
+      }
+      console.log(`[CTA] 소프트 CTA 삽입 완료 (템플릿 #${ctaIndex + 1})`)
+
+      // DB 업데이트 (이미지 URL + 내부 링크 + Schema + TOC + CTA 포함 최종 HTML)
       await c.env.DB.prepare(
         `UPDATE contents SET content_html = ?, thumbnail_url = ? WHERE id = ?`
       ).bind(finalHtml, thumbnailUrl, contentId).run()

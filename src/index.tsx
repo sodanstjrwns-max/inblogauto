@@ -1473,10 +1473,31 @@ function getIndexHtml(): string {
           <div id="cannibalization-result" class="text-sm text-gray-500">\uc704 \ubc84\ud2bc\uc744 \ub20c\ub7ec \ud0a4\uc6cc\ub4dc \uc911\ubcf5 \uc704\ud5d8\uc744 \ud655\uc778\ud558\uc138\uc694.</div>
         </div>
 
+        <!-- \ud1a0\ud53d \ud074\ub7ec\uc2a4\ud130 + \uc2dc\uc98c \ud0a4\uc6cc\ub4dc -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-semibold text-gray-900"><i class="fas fa-project-diagram text-purple-500 mr-2"></i>9. \ud1a0\ud53d \ud074\ub7ec\uc2a4\ud130</h3>
+              <button onclick="loadTopicClusters()" class="bg-purple-100 text-purple-700 px-3 py-1.5 rounded-lg text-xs hover:bg-purple-200"><i class="fas fa-sync mr-1"></i>\ubd84\uc11d</button>
+            </div>
+            <div id="topic-cluster-result" class="text-sm text-gray-500">\ud1a0\ud53d \ucee4\ubc84\ub9ac\uc9c0\ub97c \ubd84\uc11d\ud558\ub824\uba74 \ubc84\ud2bc\uc744 \ub20c\ub7ec\uc8fc\uc138\uc694.</div>
+          </div>
+          <div class="card p-6">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-semibold text-gray-900"><i class="fas fa-snowflake text-cyan-500 mr-2"></i>10. \uc2dc\uc98c \ud0a4\uc6cc\ub4dc</h3>
+              <div class="flex gap-2">
+                <button onclick="loadSeasonalKeywords()" class="bg-cyan-100 text-cyan-700 px-3 py-1.5 rounded-lg text-xs hover:bg-cyan-200"><i class="fas fa-calendar mr-1"></i>\ud655\uc778</button>
+                <button onclick="applySeasonalBoost()" class="bg-cyan-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-cyan-700"><i class="fas fa-arrow-up mr-1"></i>\ubd80\uc2a4\ud2b8</button>
+              </div>
+            </div>
+            <div id="seasonal-result" class="text-sm text-gray-500">\uc774\ubc88 \ub2ec \uc2dc\uc98c \ud0a4\uc6cc\ub4dc\ub97c \ud655\uc778\ud558\ub824\uba74 \ubc84\ud2bc\uc744 \ub20c\ub7ec\uc8fc\uc138\uc694.</div>
+          </div>
+        </div>
+
         <!-- \uc54c\ub9bc \uc124\uc815 -->
         <div class="card p-6">
           <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-bell text-yellow-500 mr-2"></i>8. \uc54c\ub9bc \uc2dc\uc2a4\ud15c \uc124\uc815</h3>
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div>
               <label class="text-sm font-medium text-gray-700 mb-1 block"><i class="fab fa-slack mr-1"></i>\uc2ac\ub799 Webhook URL</label>
               <input id="set-slack-webhook" type="url" value="\${notifStatus.slack_url || ''}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://hooks.slack.com/services/...">
@@ -1487,10 +1508,18 @@ function getIndexHtml(): string {
               <input id="set-email-webhook" type="url" value="\${notifStatus.email_url || ''}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://hook.us1.make.com/...">
               <p class="text-xs text-gray-400 mt-1">Zapier / Make / n8n \ub4f1\uc5d0\uc11c Webhook URL \uc0dd\uc131</p>
             </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700 mb-1 block"><i class="fab fa-telegram mr-1"></i>\ud154\ub808\uadf8\ub7a8 \uc124\uc815</label>
+              <input id="set-tg-bot-token" type="text" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono mb-2" placeholder="Bot Token (BotFather\uc5d0\uc11c \ubc1c\uae09)">
+              <input id="set-tg-chat-id" type="text" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="Chat ID (\uc22b\uc790)">
+              <button onclick="setupTelegram()" class="mt-2 bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-blue-600 w-full"><i class="fab fa-telegram mr-1"></i>\ud154\ub808\uadf8\ub7a8 \uc5f0\uacb0</button>
+              <div id="tg-status" class="text-xs text-gray-400 mt-1"></div>
+            </div>
           </div>
           <div class="flex gap-2 mt-4">
             <button onclick="saveNotificationSettings()" class="bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-yellow-700"><i class="fas fa-save mr-1"></i>\uc54c\ub9bc \uc124\uc815 \uc800\uc7a5</button>
             <button onclick="testNotification()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-300"><i class="fas fa-paper-plane mr-1"></i>\ud14c\uc2a4\ud2b8 \uc804\uc1a1</button>
+            <button onclick="sendDailyReport()" class="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg text-sm hover:bg-indigo-200"><i class="fas fa-chart-line mr-1"></i>\uc77c\uc77c \ub9ac\ud3ec\ud2b8</button>
           </div>
         </div>
       \`;
@@ -1501,8 +1530,12 @@ function getIndexHtml(): string {
         const allSettings = settings.settings || [];
         const slackUrl = (allSettings.find(s=>s.key==='slack_webhook_url')||{}).value || '';
         const emailUrl = (allSettings.find(s=>s.key==='email_webhook_url')||{}).value || '';
+        const tgBot = (allSettings.find(s=>s.key==='telegram_bot_token')||{}).value || '';
+        const tgChat = (allSettings.find(s=>s.key==='telegram_chat_id')||{}).value || '';
         if(slackUrl) document.getElementById('set-slack-webhook').value = slackUrl;
         if(emailUrl) document.getElementById('set-email-webhook').value = emailUrl;
+        if(tgBot) { document.getElementById('set-tg-bot-token').value = tgBot; document.getElementById('tg-status').innerHTML = '<span class="text-green-600">\u2705 \uc5f0\uacb0\ub428</span>'; }
+        if(tgChat) document.getElementById('set-tg-chat-id').value = tgChat;
       } catch {}
     }
 
@@ -1582,6 +1615,70 @@ function getIndexHtml(): string {
         await api('/enhancements/test-notification', { method: 'POST' });
         showToast('\ud14c\uc2a4\ud2b8 \uc54c\ub9bc\uc774 \uc804\uc1a1\ub418\uc5c8\uc2b5\ub2c8\ub2e4!');
       } catch(e) {}
+
+    async function setupTelegram() {
+      const botToken = document.getElementById('set-tg-bot-token').value.trim();
+      const chatId = document.getElementById('set-tg-chat-id').value.trim();
+      const statusEl = document.getElementById('tg-status');
+      if (!botToken || !chatId) { statusEl.innerHTML = '<span class="text-red-500">Bot Token\uacfc Chat ID\ub97c \ubaa8\ub450 \uc785\ub825\ud558\uc138\uc694</span>'; return; }
+      statusEl.innerHTML = '<span class="text-blue-500">\uc5f0\uacb0 \uc911...</span>';
+      try {
+        const res = await api('/enhancements/telegram/setup', { method: 'POST', body: JSON.stringify({ bot_token: botToken, chat_id: chatId }) });
+        statusEl.innerHTML = '<span class="text-green-600">\u2705 @' + res.bot_username + ' \uc5f0\uacb0 \uc644\ub8cc!</span>';
+        showToast('\ud154\ub808\uadf8\ub7a8 \uc5f0\uacb0 \uc131\uacf5!');
+      } catch(e) { statusEl.innerHTML = '<span class="text-red-500">\u274c ' + e.message + '</span>'; }
+    }
+
+    async function sendDailyReport() {
+      showToast('\uc77c\uc77c \ub9ac\ud3ec\ud2b8 \ubc1c\uc1a1 \uc911...', 'info');
+      try {
+        await api('/enhancements/daily-report', { method: 'POST' });
+        showToast('\uc77c\uc77c \ub9ac\ud3ec\ud2b8\uac00 \uc804\uc1a1\ub418\uc5c8\uc2b5\ub2c8\ub2e4!');
+      } catch(e) { showToast('\uc2e4\ud328: ' + e.message, 'error'); }
+    }
+
+    async function loadTopicClusters() {
+      const el = document.getElementById('topic-cluster-result');
+      el.innerHTML = '<div class="spinner"></div> \ubd84\uc11d \uc911...';
+      try {
+        const res = await api('/enhancements/topic-clusters');
+        let html = '<div class="mb-3 p-3 bg-purple-50 rounded-lg"><strong>\uc804\uccb4 \ucee4\ubc84\ub9ac\uc9c0: ' + res.summary.coverage_pct + '%</strong> (' + res.summary.covered_topics + '/' + res.summary.total_topics + ' \ud1a0\ud53d, ' + res.summary.total_posts + '\uac1c \uae00)</div>';
+        for (const [key, cluster] of Object.entries(res.clusters)) {
+          const c = cluster;
+          const color = c.coverage_pct >= 70 ? 'green' : c.coverage_pct >= 40 ? 'yellow' : 'red';
+          html += '<div class="mb-2 p-2 bg-' + color + '-50 rounded-lg">';
+          html += '<div class="flex justify-between"><span class="font-medium">' + c.name + '</span><span class="text-xs">' + c.coverage_pct + '% (' + c.covered_topics + '/' + c.total_topics + ')</span></div>';
+          if (c.uncovered.length > 0) {
+            html += '<div class="mt-1 text-xs text-gray-500">\ubbf8\ub2e4\ub8ec: ' + c.uncovered.slice(0, 3).join(', ') + (c.uncovered.length > 3 ? ' +' + (c.uncovered.length - 3) : '') + '</div>';
+          }
+          html += '</div>';
+        }
+        html += '<div class="mt-2 text-xs text-gray-400">' + res.summary.recommendation + '</div>';
+        el.innerHTML = html;
+      } catch(e) { el.innerHTML = '<span class="text-red-500">' + e.message + '</span>'; }
+    }
+
+    async function loadSeasonalKeywords() {
+      const el = document.getElementById('seasonal-result');
+      el.innerHTML = '<div class="spinner"></div> \ud655\uc778 \uc911...';
+      try {
+        const res = await api('/enhancements/seasonal');
+        let html = '<div class="mb-2 p-3 bg-cyan-50 rounded-lg"><strong>' + res.month + '\uc6d4 (' + res.season + ')</strong></div>';
+        html += '<div class="flex flex-wrap gap-1 mb-2">';
+        res.seasonal_topics.forEach(function(t) { html += '<span class="bg-cyan-100 text-cyan-700 px-2 py-1 rounded-full text-xs">' + t + '</span>'; });
+        html += '</div>';
+        html += '<div class="text-xs text-gray-500">DB \ub9e4\uce6d: ' + res.matching_keywords.length + '\uac1c | \uc774\ubbf8 \ubc1c\ud589: ' + res.already_published + '\uac1c</div>';
+        el.innerHTML = html;
+      } catch(e) { el.innerHTML = '<span class="text-red-500">' + e.message + '</span>'; }
+    }
+
+    async function applySeasonalBoost() {
+      if (!confirm('\uc774\ubc88 \ub2ec \uc2dc\uc98c \ud0a4\uc6cc\ub4dc\uc758 \uc6b0\uc120\uc21c\uc704\ub97c +2 \ubd80\uc2a4\ud2b8\ud569\ub2c8\ub2e4. \uacc4\uc18d?')) return;
+      try {
+        const res = await api('/enhancements/seasonal/apply', { method: 'POST' });
+        showToast(res.message);
+        loadSeasonalKeywords();
+      } catch(e) { showToast('\uc2e4\ud328: ' + e.message, 'error'); }
     }
 
     // ===== Settings =====
