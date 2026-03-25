@@ -2105,6 +2105,127 @@ function calculateQuestionRelevance(question: string, keyword: string): number {
 }
 
 
+// ===== 이미지 URL 일괄 수정 (inblogauto.pages.dev → Pollinations 영구 URL) =====
+enhancementRoutes.post('/fix-images', async (c) => {
+  const { update_inblog, dry_run } = await c.req.json().catch(() => ({ update_inblog: false, dry_run: true }))
+  
+  // 깨진 이미지 URL 패턴
+  const brokenPattern = /https:\/\/inblogauto\.pages\.dev\/api\/image\/(\d+)\/(thumbnail|body_\d+)\.jpg/g
+  
+  // 발행된 콘텐츠 조회
+  const contents: any[] = await c.env.DB.prepare(
+    "SELECT id, keyword_text, content_html, thumbnail_url, slug FROM contents WHERE content_html LIKE '%inblogauto.pages.dev/api/image%'"
+  ).all().then((r: any) => r.results || [])
+  
+  if (!contents.length) {
+    return c.json({ message: '수정할 콘텐츠가 없습니다', fixed: 0 })
+  }
+
+  let fixed = 0
+  let inblogUpdated = 0
+  const details: any[] = []
+  
+  // Inblog API 키
+  let inblogApiKey = ''
+  if (update_inblog) {
+    try {
+      const row = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+      inblogApiKey = row?.value as string || ''
+    } catch {}
+  }
+
+  for (const content of contents) {
+    let newHtml = content.content_html
+    let newThumb = content.thumbnail_url || ''
+    const replacements: string[] = []
+    
+    // 모든 깨진 이미지 URL을 Pollinations URL로 교체
+    newHtml = newHtml.replace(brokenPattern, (match: string, contentId: string, imageType: string) => {
+      const keyword = content.keyword_text || '치과'
+      const seed = parseInt(contentId) * 1000 + (imageType === 'thumbnail' ? 1 : parseInt(imageType.replace('body_', '')) + 2)
+      
+      let prompt: string
+      const w = imageType === 'thumbnail' ? 1200 : 1200
+      const h = imageType === 'thumbnail' ? 630 : 800
+      
+      if (imageType === 'thumbnail') {
+        prompt = `High quality photorealistic 3D dental medical illustration related to ${keyword}, clean modern design, soft pastel blue mint colors, no text, no human faces, professional healthcare`
+      } else {
+        prompt = `High quality 3D dental medical illustration for ${keyword} article, clean infographic style, soft pastel colors, no text, no faces, professional`
+      }
+      
+      const encoded = encodeURIComponent(prompt.substring(0, 180))
+      const polUrl = `https://image.pollinations.ai/prompt/${encoded}?width=${w}&height=${h}&seed=${seed}&nologo=true&model=turbo`
+      replacements.push(`${imageType} → Pollinations`)
+      return polUrl
+    })
+    
+    // 썸네일 URL도 교체
+    if (newThumb.includes('inblogauto.pages.dev/api/image')) {
+      const keyword = content.keyword_text || '치과'
+      const seed = content.id * 1000 + 1
+      const prompt = `High quality photorealistic 3D dental medical illustration related to ${keyword}, clean modern design, soft pastel blue mint colors, no text, no human faces, professional healthcare`
+      const encoded = encodeURIComponent(prompt.substring(0, 180))
+      newThumb = `https://image.pollinations.ai/prompt/${encoded}?width=1200&height=630&seed=${seed}&nologo=true&model=turbo`
+      replacements.push('thumbnail_url → Pollinations')
+    }
+    
+    if (replacements.length === 0) continue
+    
+    if (!dry_run) {
+      // DB 업데이트
+      await c.env.DB.prepare(
+        "UPDATE contents SET content_html = ?, thumbnail_url = ?, updated_at = datetime('now') WHERE id = ?"
+      ).bind(newHtml, newThumb, content.id).run()
+      
+      // Inblog 업데이트
+      if (update_inblog && inblogApiKey) {
+        try {
+          const logRow = await c.env.DB.prepare(
+            "SELECT inblog_post_id FROM publish_logs WHERE content_id = ? AND status = 'published' ORDER BY id DESC LIMIT 1"
+          ).bind(content.id).first()
+          
+          if (logRow?.inblog_post_id) {
+            const patchResp = await fetch(`https://inblog.ai/api/v1/posts/${logRow.inblog_post_id}`, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/vnd.api+json',
+                'Authorization': `Bearer ${inblogApiKey}`,
+                'Accept': 'application/vnd.api+json'
+              },
+              body: JSON.stringify({
+                jsonapi: { version: '1.0' },
+                data: {
+                  type: 'posts',
+                  id: String(logRow.inblog_post_id),
+                  attributes: {
+                    content_html: newHtml,
+                    og_image: newThumb
+                  }
+                }
+              })
+            })
+            if (patchResp.ok) inblogUpdated++
+          }
+        } catch (e: any) {
+          console.warn(`[이미지수정] Inblog 업데이트 실패 (ID ${content.id}):`, e.message)
+        }
+      }
+    }
+    
+    fixed++
+    details.push({ id: content.id, keyword: content.keyword_text, changes: replacements })
+  }
+  
+  return c.json({
+    message: `${fixed}개 콘텐츠 이미지 ${dry_run ? '수정 예정' : '수정 완료'}`,
+    fixed,
+    inblog_updated: inblogUpdated,
+    dry_run: !!dry_run,
+    details
+  })
+})
+
 export { 
   enhancementRoutes, 
   generateFaqSchema, 

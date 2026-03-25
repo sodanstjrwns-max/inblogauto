@@ -1664,6 +1664,7 @@ function getIndexHtml(): string {
         await api('/enhancements/test-notification', { method: 'POST' });
         showToast('\ud14c\uc2a4\ud2b8 \uc54c\ub9bc\uc774 \uc804\uc1a1\ub418\uc5c8\uc2b5\ub2c8\ub2e4!');
       } catch(e) {}
+    }
 
     async function setupTelegram() {
       const botToken = document.getElementById('set-tg-bot-token').value.trim();

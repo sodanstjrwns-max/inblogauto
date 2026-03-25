@@ -1291,7 +1291,7 @@ async function generateBodyImage(
           const data: any = await res.json()
           const imageUrl = data?.images?.[0]?.url
           if (imageUrl) {
-            // R2에 영구 저장
+            // ★ fal.ai 원본 URL 직접 사용 + R2 백업
             if (env?.R2) {
               try {
                 const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
@@ -1299,12 +1299,13 @@ async function generateBodyImage(
                   const buf = await imgRes.arrayBuffer()
                   const key = `images/${contentId}/body_${imageIndex}.jpg`
                   await env.R2.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' }, customMetadata: { keyword, description: slotDescription.substring(0, 200) } })
-                  return { url: `https://inblogauto.pages.dev/api/image/${contentId}/body_${imageIndex}.jpg` }
+                  console.log(`[본문이미지] R2 백업 저장 완료`)
                 }
               } catch (r2Err: any) {
-                console.warn(`[본문이미지] R2 저장 실패: ${r2Err.message}`)
+                console.warn(`[본문이미지] R2 백업 실패 (무시): ${r2Err.message}`)
               }
             }
+            // fal.ai 원본 URL 직접 사용
             return { url: imageUrl }
           }
         }
@@ -1469,8 +1470,8 @@ async function generateAIImage(
           if (imageUrl) {
             console.log(`[이미지] ✅ ${model.name} 성공: ${keyword} (${purpose}) ${model.cost}`)
             
-            // fal.ai URL은 임시 → R2에 영구 저장하여 엑스박스 방지
-            // 빠른 저장: 10초 타임아웃, 실패해도 fal.ai URL 사용
+            // ★ fal.ai URL을 직접 사용 (인블로그가 발행 시 이미지를 캐시/저장함)
+            // R2에도 백업 저장하되, URL은 fal.ai 원본을 사용
             if (contentId && env?.R2) {
               try {
                 const imgResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
@@ -1481,15 +1482,13 @@ async function generateAIImage(
                     httpMetadata: { contentType: 'image/jpeg' },
                     customMetadata: { keyword, model: model.name }
                   })
-                  const permanentUrl = `https://inblogauto.pages.dev/api/image/${contentId}/${purpose}.jpg`
-                  console.log(`[이미지] R2 영구 저장 완료: ${permanentUrl}`)
-                  return { url: permanentUrl, caption }
+                  console.log(`[이미지] R2 백업 저장 완료 (URL은 fal.ai 원본 사용)`)
                 }
               } catch (r2Err: any) {
-                console.warn(`[이미지] R2 저장 실패, fal.ai URL 직접 사용: ${r2Err.message}`)
+                console.warn(`[이미지] R2 백업 저장 실패 (무시): ${r2Err.message}`)
               }
             }
-            // R2 저장 실패 시 fal.ai URL 직접 사용 (보통 24~48시간 유효)
+            // fal.ai 원본 URL 직접 사용 (CDN이므로 수일~수주 유효)
             return { url: imageUrl, caption }
           }
         } else {
@@ -1518,14 +1517,16 @@ async function generateAIImage(
       
       if (raw && typeof raw === 'string' && raw.length > 1000) {
         console.log(`[이미지] Workers AI schnell 성공: ${keyword}, base64 len=${raw.length}`)
+        // R2에 백업 저장 + data URI 대신 Pollinations 폴백 URL 사용 (인블로그 호환)
         if (contentId && env?.R2) {
           try {
-            const savedUrl = await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
-            return { url: savedUrl, caption }
+            await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
+            console.log(`[이미지] Workers AI → R2 백업 저장 완료`)
           } catch (r2Err: any) {
-            console.error('R2 저장 실패:', r2Err.message)
+            console.warn('R2 백업 저장 실패:', r2Err.message)
           }
         }
+        // Workers AI 결과는 base64이므로 직접 URL 사용 불가 → Pollinations 폴백으로 이동
       }
     } catch (schnellErr: any) {
       console.warn(`Workers AI schnell 실패: ${schnellErr.message}`)
