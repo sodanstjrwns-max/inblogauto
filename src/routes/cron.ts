@@ -617,10 +617,8 @@ cronApp.post('/', async (c) => {
         thumbnailUrl = thumbResult.url
         
         if (thumbnailUrl.startsWith('data:')) {
-          console.warn('[이미지] data URI 감지 → Pollinations 폴백 강제 전환')
-          const seed = Math.abs(Date.now() % 999999)
-          const encodedPrompt = encodeURIComponent(`Clean modern dental medical illustration about ${kw.keyword}, soft pastel colors, no text`.substring(0, 180))
-          thumbnailUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true`
+          console.warn('[이미지] data URI 감지 → 플레이스홀더 폴백 전환')
+          thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
         }
       } catch (imgErr: any) {
         console.error('이미지 생성 실패, 폴백 사용:', imgErr.message)
@@ -1316,10 +1314,11 @@ async function generateBodyImage(
     }
   }
 
-  // 폴백: Pollinations
-  const seed = Math.abs(Date.now() % 999999) + imageIndex
-  const encodedPrompt = encodeURIComponent(prompt.substring(0, 180))
-  return { url: `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=800&seed=${seed}&nologo=true&model=turbo` }
+  // 폴백: 플레이스홀더 (Pollinations 서비스 중단됨)
+  console.warn(`[본문이미지] fal.ai 전체 실패 → 플레이스홀더 사용`)
+  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', '0891B2', '7C3AED', '059669']
+  const colorIdx = Math.abs(Date.now() + imageIndex) % colors.length
+  return { url: `https://placehold.co/1200x800/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif` }
 }
 
 // ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
@@ -1517,39 +1516,33 @@ async function generateAIImage(
       
       if (raw && typeof raw === 'string' && raw.length > 1000) {
         console.log(`[이미지] Workers AI schnell 성공: ${keyword}, base64 len=${raw.length}`)
-        // R2에 백업 저장 + data URI 대신 Pollinations 폴백 URL 사용 (인블로그 호환)
+        // R2에 저장하고 R2 API URL 반환 (프로덕션에서는 동작)
         if (contentId && env?.R2) {
           try {
-            await saveImageToStorage(env, contentId, keyword, purpose, prompt, raw)
-            console.log(`[이미지] Workers AI → R2 백업 저장 완료`)
+            const key = `images/${contentId}/${purpose === 'thumbnail' ? 'thumbnail' : `body_${contentId}`}.jpg`
+            const binaryStr = atob(raw)
+            const bytes = new Uint8Array(binaryStr.length)
+            for (let i = 0; i < binaryStr.length; i++) {
+              bytes[i] = binaryStr.charCodeAt(i)
+            }
+            await env.R2.put(key, bytes.buffer, {
+              httpMetadata: { contentType: 'image/jpeg' },
+              customMetadata: { keyword, model: 'workers-ai-schnell' }
+            })
+            const r2Url = `https://inblogauto.pages.dev/api/image/${contentId}/${purpose === 'thumbnail' ? 'thumbnail' : `body_${contentId}`}.jpg`
+            console.log(`[이미지] Workers AI → R2 저장 및 URL 반환: ${r2Url}`)
+            return { url: r2Url, caption }
           } catch (r2Err: any) {
-            console.warn('R2 백업 저장 실패:', r2Err.message)
+            console.warn('R2 저장 실패:', r2Err.message)
           }
         }
-        // Workers AI 결과는 base64이므로 직접 URL 사용 불가 → Pollinations 폴백으로 이동
       }
     } catch (schnellErr: any) {
       console.warn(`Workers AI schnell 실패: ${schnellErr.message}`)
     }
   }
-  
-  // ===== 방법 3: Pollinations AI (무료 폴백) =====
-  try {
-    const seed = Math.abs(hashString(keyword + purpose + contentType))
-    const shortPrompt = prompt.substring(0, 200)
-    const encodedPrompt = encodeURIComponent(shortPrompt)
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&seed=${seed}&nologo=true&model=turbo`
-    
-    const headCheck = await fetch(pollinationsUrl, { method: 'HEAD', signal: AbortSignal.timeout(20000) })
-    if (headCheck.ok || headCheck.status === 302 || headCheck.status === 301) {
-      console.log(`[이미지] Pollinations turbo 사용: ${keyword} (${purpose})`)
-      return { url: pollinationsUrl, caption }
-    }
-  } catch (pollErr: any) {
-    console.warn('Pollinations 실패:', pollErr.message)
-  }
 
-  // ===== 방법 4: 플레이스홀더 폴백 (최후의 수단) =====
+  // ===== 방법 3: 플레이스홀더 폴백 (최후의 수단) =====
   const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
   const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
   const bg = colors[colorIdx]
