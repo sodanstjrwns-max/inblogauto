@@ -1,7 +1,7 @@
 // Cron Worker v2: 새벽 자동 발행 + 실패 재시도 + 중복 방지 + 시간 랜덤화
-// KST 02:00~05:30 → 5건 발행 (오전 6시 전 완료)
+// KST 02:00~05:00 → 3건 발행 (v4: 제목 다양화 + 페르소나 + 지역명 본문만)
 
-const DAILY_TARGET = 5
+const DAILY_TARGET = 3
 
 export default {
   async scheduled(event, env, ctx) {
@@ -100,7 +100,7 @@ export default {
           today_published: dashData.today_published || 0,
           daily_target: DAILY_TARGET,
           remaining: Math.max(0, DAILY_TARGET - (dashData.today_published || 0)),
-          schedule: 'KST 02:00, 03:00, 04:00, 05:00, 05:30 (±15min random)',
+          schedule: 'KST 02:00, 03:30, 05:00 (±15min random)',
           features: ['retry_on_failure', 'duplicate_prevention', 'time_randomization']
         }, null, 2), {
           status: 200,
@@ -111,10 +111,10 @@ export default {
       }
     }
 
-    return new Response(`Inblog AutoPublish Cron Worker v3
+    return new Response(`Inblog AutoPublish Cron Worker v4
 
-Schedule: KST 02:00, 03:00, 04:00 (±15min random)
-Target: ${DAILY_TARGET} posts/day (v3: quality-first, Google spam update 대응)
+Schedule: KST 02:00, 03:30, 05:00 (±15min random)
+Target: ${DAILY_TARGET} posts/day (v4: 제목 다양화 + 페르소나 + 지역명 본문만)
 
 Features:
   - Time randomization (±15min)
