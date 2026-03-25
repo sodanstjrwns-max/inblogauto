@@ -984,6 +984,22 @@ ${internalLinksBlock}
 4. 이 차별화 포인트를 독립 H2 또는 H3 섹션으로 작성하세요
 5. JSON 출력에 "differentiation_angle" 필드로 차별화 포인트를 한 문장으로 명시하세요
 
+## ❌➡️✅ 오해 교정 (필수 — E-E-A-T 핵심)
+이 키워드("${keyword}")와 관련해 환자들이 흔히 **잘못 알고 있는 것 1가지**를 반드시 교정하세요.
+- 본문에 "❌ 오해: [잘못 아는 것]" → "✅ 사실: [정확한 정보 + 근거]" 형식 포함
+- 독립 H3 또는 기존 H2 안에 자연스럽게 녹여도 됩니다
+- JSON에 "myth_correction" 필드로 교정한 오해를 한 문장으로 명시하세요
+
+## 📚 수치 출처 맥락 (필수)
+수치를 쓸 때 **반드시 출처 맥락**을 함께 쓰세요. 최소 2회 이상.
+- ❌ "성공률은 95%입니다" → ✅ "대한치과의사협회 자료 기준, 적절히 관리된 경우 성공률이 95%를 넘는다는 보고가 있습니다"
+- 사용 가능: "건강보험심사평가원 기준", "대한치과의사협회 권고안", "학술지 연구에 따르면", "임상 문헌에 따르면" 등
+
+## 🎯 첫 문단 검색 의도 명시 (필수)
+첫 <p> 안에 **이 글이 누구를 위한 것인지** 한 문장으로 명시하세요.
+- 예: "이 글은 ${keyword} 상담을 받고 고민 중이신 분을 위해 작성했습니다."
+- JSON에 "search_intent_sentence" 필드로 해당 문장을 명시하세요
+
 핵심 방향:
 - 환자의 불안과 걱정을 먼저 인정하고, 구체적 정보로 해소하세요
 - 비용이나 가격 정보보다 실제 치료 과정, 통증, 회복에 집중하세요
@@ -997,12 +1013,14 @@ ${internalLinksBlock}
   "title": "...",
   "slug": "...",
   "meta_description": "...",
-  "content_html": "... (범위 명시 박스 + 차별화 섹션 필수 포함)",
+  "content_html": "... (범위 명시 박스 + 오해 교정 + 차별화 섹션 + 출처 맥락 수치 필수 포함)",
   "tags": [...],
   "faq": [{"q":"...","a":"..."}],
   "word_count": 숫자,
   "scope_notice": "이 글의 대상·조건 + 다루지 않는 것 한 문장",
-  "differentiation_angle": "다른 글과 다른 핵심 차별점 한 문장"
+  "differentiation_angle": "다른 글과 다른 핵심 차별점 한 문장",
+  "myth_correction": "교정한 오해 한 문장 (❌ → ✅)",
+  "search_intent_sentence": "첫 문단에 들어간 검색 의도 명시 문장"
 }
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
@@ -1181,6 +1199,40 @@ ${internalLinksBlock}
         console.warn(`[v5.2 차별화검증] differentiation_angle 필드 없음 또는 부족`)
       }
 
+      // === v5.3: 오해 교정 섹션 사후 검증 — Claude가 빠뜨렸을 때 자동 삽입 ===
+      const finalPlainText = finalHtml.replace(/<[^>]*>/g, '')
+      const hasMythCorrection = /오해.*사실|잘못\s*알|실제로는|사실은\s*그렇지|❌.*✅|흔히.*생각.*하지만/.test(finalPlainText)
+      if (!hasMythCorrection) {
+        console.warn(`[v5.3 오해교정] 오해 교정 섹션 누락 → 자동 삽입`)
+        const mythText = parsed.myth_correction || `${keyword}에 대해 인터넷에서 흔히 볼 수 있는 정보 중 실제 임상과 다른 부분이 있습니다`
+        const mythBox = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:16px;margin:20px 0;font-size:14px"><strong>⚠️ 잠깐, 이건 오해입니다</strong><br><span style="color:#dc2626">❌</span> ${mythText}<br><span style="color:#16a34a">✅</span> 실제로는 개인의 구강 상태와 관리 방법에 따라 결과가 크게 달라집니다. 정확한 판단은 반드시 전문의 진단을 통해 확인하시기 바랍니다.</div>`
+        // FAQ H2 바로 앞에 삽입
+        const faqH2Idx = finalHtml.indexOf('<h2')
+        const lastH2Idx = finalHtml.lastIndexOf('<h2')
+        if (lastH2Idx !== -1 && lastH2Idx !== faqH2Idx) {
+          // FAQ H2(마지막) 바로 앞에 삽입
+          finalHtml = finalHtml.slice(0, lastH2Idx) + mythBox + '\n' + finalHtml.slice(lastH2Idx)
+        } else if (faqH2Idx !== -1) {
+          finalHtml = finalHtml.slice(0, faqH2Idx) + mythBox + '\n' + finalHtml.slice(faqH2Idx)
+        }
+      }
+
+      // === v5.3: 첫 문단 검색 의도 명시 사후 검증 ===
+      const first200Text = finalHtml.replace(/<[^>]*>/g, '').substring(0, 200)
+      const hasSearchIntent = /위한\s*(글|정보|안내)|분이라면|분께|고민\s*중이시|검색.*계신|상황이라면|들으신\s*분|걱정되시는/.test(first200Text)
+      if (!hasSearchIntent) {
+        console.warn(`[v5.3 의도명시] 첫 문단 검색 의도 명시 누락 → 자동 삽입`)
+        const intentSentence = parsed.search_intent_sentence || `${keyword}에 대해 궁금하거나 걱정되어 검색하고 계신 분`
+        const intentHtml = `<p style="color:#475569;font-size:15px;margin:0 0 16px 0;padding:12px 16px;background:#f8fafc;border-radius:6px;border-left:3px solid #3b82f6"><em>이 글은 <strong>${intentSentence}</strong>을 위해 작성되었습니다.</em></p>`
+        // 첫 <p> 뒤에 삽입
+        const firstPEnd = finalHtml.indexOf('</p>')
+        if (firstPEnd !== -1) {
+          finalHtml = finalHtml.slice(0, firstPEnd + 4) + '\n' + intentHtml + finalHtml.slice(firstPEnd + 4)
+        } else {
+          finalHtml = intentHtml + finalHtml
+        }
+      }
+
       return {
         title: finalTitle,
         slug: parsed.slug || keyword.replace(/\s+/g, '-'),
@@ -1190,7 +1242,9 @@ ${internalLinksBlock}
         faq: parsed.faq || [],
         word_count: plainText.length,
         scope_notice: parsed.scope_notice || '',
-        differentiation_angle: parsed.differentiation_angle || ''
+        differentiation_angle: parsed.differentiation_angle || '',
+        myth_correction: parsed.myth_correction || '',
+        search_intent_sentence: parsed.search_intent_sentence || ''
       }
     } catch (e: any) {
       lastError = `${model.label} 오류: ${e.message}`
