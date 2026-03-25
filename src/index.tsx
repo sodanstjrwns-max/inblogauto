@@ -36,7 +36,8 @@ app.route('/api/enhancements', enhancementRoutes)
 app.route('/api/keyword-discovery', keywordDiscoveryRoutes)
 
 // Cron endpoint (Cloudflare Cron Trigger calls this)
-app.route('/api/cron/generate', cronHandler)
+// cronHandler includes: POST / (generate), POST /publish-next, POST /generate-drafts, GET /draft-status
+app.route('/api/cron', cronHandler)
 
 // Health check
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))

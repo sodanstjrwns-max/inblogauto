@@ -321,7 +321,7 @@ async function getPublishedPosts(db: D1Database, excludeKeyword?: string): Promi
 }
 
 // POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
-cronApp.post('/', async (c) => {
+cronApp.post('/generate', async (c) => {
   try {
   const body = await c.req.json().catch(() => ({}))
   const requestedCount = (body as any).count || 0
@@ -573,6 +573,34 @@ cronApp.post('/', async (c) => {
       }
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
+
+      // === 0.3단계: 실명(본명) 후처리 필터 — 성+이름 → "모 씨"로 자동 치환 ===
+      {
+        let html = bestContent.content_html || ''
+        // 한글 성(1글자) + 이름(2글자) 패턴 → "X모 씨"로 치환
+        // 예: 김미영 씨 → 김모 씨, 박영수 환자 → 박모 씨, 이지은 님 → 이모 씨
+        const namePattern = /([\uAC00-\uD7AF])([\uAC00-\uD7AF]{2})\s*(씨|님|환자|환자분|분|씨가|님이|님께|씨는|님은|씨의|님의)/g
+        const COMMON_SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배조백허노남심하주우곽성차유구연'
+        let nameReplaced = 0
+        html = html.replace(namePattern, (match, surname, name, suffix) => {
+          // 성이 한국 흔한 성씨인 경우만 치환 (의학 용어 오탐 방지)
+          if (COMMON_SURNAMES.includes(surname)) {
+            nameReplaced++
+            return `${surname}모 씨`
+          }
+          return match
+        })
+        // 성+이름만 있고 호칭이 없는 경우도 체크 (예: "김미영은", "김미영의")
+        const namePattern2 = new RegExp(`([${COMMON_SURNAMES}])([\uAC00-\uD7AF]{2})(은|는|이|가|을|를|의|에게|한테|께서|도)`, 'g')
+        html = html.replace(namePattern2, (match, surname, name, particle) => {
+          nameReplaced++
+          return `${surname}모 씨${particle}`
+        })
+        if (nameReplaced > 0) {
+          console.warn(`[실명필터] ${nameReplaced}개 실명 → 익명화 치환 완료`)
+        }
+        bestContent.content_html = html
+      }
 
       // === 0.5단계: 비용/보험 콘텐츠 후처리 (Claude가 여전히 삽입할 경우 제거) ===
       const COST_REMOVAL_PATTERNS = [
@@ -1006,6 +1034,12 @@ ${internalLinksBlock}
 
 ⛔ 절대 금지: "만원", "만 원", "가격", "비용", "보험 적용", "보험", "실비", "실손", "급여", "비급여", "건강보험", "할부", "할인", "무료 상담", "무료 검진", "수가", "본인부담", "의료비", "치료비" — 이 단어들을 title, content_html, meta_description, FAQ 어디에도 절대 쓰지 마세요. 비용 관련 FAQ 질문도 포함 금지.
 
+⛔ 실명(본명) 절대 금지 — 법적 의무:
+- 환자 사례에 실제 이름(성+이름) 절대 사용 금지 (예: 김미영, 박영수, 이지은 등)
+- ✅ 허용: "김모 씨", "50대 환자분", "A씨", "한 환자분", 성만 단독 사용("김 씨")
+- ❌ 금지: "김미영 씨", "박영수 님", "이지은 환자" (성+이름 전부 금지)
+- 의사/직원 이름도 금지. 모든 사례는 익명화하세요.
+
 ## 📤 JSON 출력 필드 (필수)
 {
   "title": "...",
@@ -1253,6 +1287,210 @@ ${internalLinksBlock}
 
   throw new Error(`모든 Claude 모델 실패: ${lastError}`)
 }
+
+// ===== POST /api/cron/publish-next — draft 1개를 인블로그에 발행 (가벼운 API, 크론용) =====
+cronApp.post('/publish-next', async (c) => {
+  try {
+    // draft 잔여량 확인
+    const draftCountRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'draft'"
+    ).first()
+    const draftCount = (draftCountRow?.cnt as number) || 0
+
+    // 가장 오래된 draft 1개 가져오기
+    const draft = await c.env.DB.prepare(
+      `SELECT c.id, c.keyword_text as keyword, c.title, c.slug, c.meta_description, c.content_html, c.thumbnail_url, c.tags
+       FROM contents c
+       WHERE c.status = 'draft'
+       ORDER BY c.created_at ASC
+       LIMIT 1`
+    ).first() as any
+
+    if (!draft) {
+      return c.json({ 
+        message: 'No draft available — draft 대기열이 비어있습니다. /api/cron/generate-drafts 를 호출하여 보충하세요.', 
+        published: false,
+        drafts_remaining: 0,
+        needs_replenish: true
+      })
+    }
+
+    // API 키 확인
+    const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+    const inblogApiKey = inblogKeyRow?.value as string || ''
+    if (!inblogApiKey) {
+      return c.json({ error: 'inblog_api_key not configured', published: false }, 500)
+    }
+
+    // API 키 검증 및 subdomain 확인
+    const apiInfo = await verifyInblogApiKey(inblogApiKey)
+    if (!apiInfo?.subdomain) {
+      return c.json({ error: 'Invalid inblog API key', published: false }, 500)
+    }
+
+    // 태그 동기화
+    let tagIds: string[] = []
+    try {
+      const tags = draft.tags ? JSON.parse(draft.tags) : []
+      if (tags.length > 0) {
+        const syncedTags = await syncTags(inblogApiKey, tags)
+        tagIds = syncedTags.map((t: any) => t.id)
+      }
+    } catch (e) {
+      console.warn('[publish-next] 태그 파싱/동기화 실패:', e)
+    }
+
+    // 작성자 ID
+    const authorId = await getAuthorId(inblogApiKey)
+
+    // 인블로그에 포스트 생성
+    const createResult = await createInblogPost(inblogApiKey, {
+      title: draft.title,
+      slug: draft.slug,
+      description: draft.meta_description,
+      content_html: draft.content_html,
+      meta_description: draft.meta_description,
+      image: draft.thumbnail_url
+    }, tagIds, authorId)
+
+    const inblogPostId = createResult.id
+
+    // 즉시 발행
+    await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+
+    const inblogUrl = `https://${apiInfo.subdomain}.inblog.ai/${draft.slug}`
+
+    // DB 업데이트
+    await c.env.DB.prepare(
+      `UPDATE contents SET status = 'published', updated_at = datetime('now') WHERE id = ?`
+    ).bind(draft.id).run()
+
+    await c.env.DB.prepare(
+      `INSERT INTO publish_logs (content_id, inblog_post_id, inblog_url, status, scheduled_at, published_at)
+       VALUES (?, ?, ?, 'published', datetime('now'), datetime('now'))`
+    ).bind(draft.id, inblogPostId, inblogUrl).run()
+
+    // 검색엔진 색인 요청
+    try {
+      await requestSearchEngineIndexing(inblogUrl, c.env.DB)
+    } catch (e) {}
+
+    const draftsRemaining = draftCount - 1
+    console.log(`[publish-next] ✅ 발행 완료: "${draft.title}" → ${inblogUrl} (남은 draft: ${draftsRemaining})`)
+
+    return c.json({
+      published: true,
+      content_id: draft.id,
+      keyword: draft.keyword,
+      title: draft.title,
+      inblog_url: inblogUrl,
+      inblog_post_id: inblogPostId,
+      tags_synced: tagIds.length,
+      drafts_remaining: draftsRemaining,
+      needs_replenish: draftsRemaining < 3
+    })
+  } catch (err: any) {
+    console.error('[publish-next] 발행 실패:', err.message)
+    return c.json({ error: err.message, published: false }, 500)
+  }
+})
+
+// ===== POST /api/cron/generate-drafts — draft만 미리 생성 (발행 X, 시간제한 없는 환경에서 호출) =====
+cronApp.post('/generate-drafts', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const requestedCount = (body as any).count || 3
+    const targetDrafts = (body as any).target_drafts || 6 // 최소 이 개수만큼 draft 유지
+
+    // 현재 draft 개수 확인
+    const draftCountRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'draft'"
+    ).first()
+    const currentDrafts = (draftCountRow?.cnt as number) || 0
+
+    // 이미 충분하면 스킵
+    if (currentDrafts >= targetDrafts) {
+      return c.json({
+        message: `Draft가 이미 충분합니다 (${currentDrafts}/${targetDrafts})`,
+        current_drafts: currentDrafts,
+        target_drafts: targetDrafts,
+        generated: 0,
+        skipped: true
+      })
+    }
+
+    // 부족한 만큼만 생성
+    const toGenerate = Math.min(requestedCount, targetDrafts - currentDrafts)
+
+    // 기존 generate 로직 호출 (auto_publish=false 강제)
+    const generateBody = {
+      count: toGenerate,
+      manual: true,
+      auto_publish: false
+    }
+
+    // 내부적으로 generate 로직 재활용 — POST /api/cron/generate 를 내부 호출
+    const url = new URL(c.req.url)
+    const internalUrl = `${url.origin}/api/cron/generate`
+    const response = await fetch(internalUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(generateBody)
+    })
+    const result = await response.json() as any
+
+    // 새 draft 개수 확인
+    const newDraftCountRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'draft'"
+    ).first()
+    const newDrafts = (newDraftCountRow?.cnt as number) || 0
+
+    console.log(`[generate-drafts] 생성 완료: ${toGenerate}건 요청 → draft ${currentDrafts} → ${newDrafts}`)
+
+    return c.json({
+      message: `Draft ${newDrafts - currentDrafts}건 생성 완료`,
+      previous_drafts: currentDrafts,
+      current_drafts: newDrafts,
+      target_drafts: targetDrafts,
+      generated: newDrafts - currentDrafts,
+      results: result.results || []
+    })
+  } catch (err: any) {
+    console.error('[generate-drafts] 실패:', err.message)
+    return c.json({ error: err.message }, 500)
+  }
+})
+
+// ===== GET /api/cron/draft-status — draft 대기열 상태 조회 =====
+cronApp.get('/draft-status', async (c) => {
+  try {
+    const draftCountRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'draft'"
+    ).first()
+    const currentDrafts = (draftCountRow?.cnt as number) || 0
+
+    const drafts = await c.env.DB.prepare(
+      `SELECT id, keyword_text as keyword, title, seo_score, created_at 
+       FROM contents WHERE status = 'draft' 
+       ORDER BY created_at ASC LIMIT 10`
+    ).all()
+
+    const publishedTodayRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'published' AND updated_at > datetime('now', '-1 day')"
+    ).first()
+    const publishedToday = (publishedTodayRow?.cnt as number) || 0
+
+    return c.json({
+      draft_count: currentDrafts,
+      published_today: publishedToday,
+      needs_replenish: currentDrafts < 3,
+      days_of_buffer: Math.floor(currentDrafts / 3), // 하루 3개 발행 기준
+      drafts: drafts.results || []
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
 
 const cronHandler = cronApp
 
