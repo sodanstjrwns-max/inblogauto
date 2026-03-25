@@ -1,5 +1,5 @@
 // Cron Worker v2: 새벽 자동 발행 + 실패 재시도 + 중복 방지 + 시간 랜덤화
-// KST 02:00~05:00 → 3건 발행 (v4: 제목 다양화 + 페르소나 + 지역명 본문만)
+// KST 02:00~05:00 → 3건 발행 (v5.1: 스팸 불가 프롬프트 + 제목 사후검증 + 카테고리 분산)
 
 const DAILY_TARGET = 3
 
@@ -111,10 +111,10 @@ export default {
       }
     }
 
-    return new Response(`Inblog AutoPublish Cron Worker v4
+    return new Response(`Inblog AutoPublish Cron Worker v5.1
 
 Schedule: KST 02:00, 03:30, 05:00 (±15min random)
-Target: ${DAILY_TARGET} posts/day (v4: 제목 다양화 + 페르소나 + 지역명 본문만)
+Target: ${DAILY_TARGET} posts/day (v5.1: 스팸 불가 프롬프트 + 제목 사후검증 + 카테고리 분산)
 
 Features:
   - Time randomization (±15min)

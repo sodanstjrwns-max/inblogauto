@@ -37,126 +37,151 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
 // ===== 콘텐츠 유형 로테이션 (균등 배분 - 비용/가격 제외) =====
 const CONTENT_TYPE_ROTATION: Array<'B' | 'C' | 'D' | 'E' | 'F'> = ['B', 'C', 'E', 'D', 'F', 'B', 'E', 'C', 'F', 'B']
 
-// ===== 제목 공식 다양화 시스템 v4 — SpamBrain 패턴 회피 =====
-// 핵심 원칙: "[키워드] + [감정어] + [지역명]" 공식 반복 금지
-// → 10가지 이상의 제목 공식을 키워드 의도(intent)별로 매핑
-// → 지역명은 제목에서 완전 제거, 본문에만 자연 삽입
+// ===== 제목 공식 다양화 시스템 v5 — 4가지 형태 강제 혼용 + 남용 키워드 제거 =====
+// 형태: Q(의문형) / N(명사형) / NUM(숫자형) / EXP(경험형)
+// 남용 금지: "가이드", "총정리", "완전 정리", "모든 것", "A부터 Z", "2026", "2026년"
+// 지역명: 제목에서 완전 제거
 
-const TITLE_FORMULAS: Record<string, { patterns: string[]; examples: (kw: string) => string[] }> = {
+type TitleType = 'Q' | 'N' | 'NUM' | 'EXP'  // 의문형 / 명사형 / 숫자형 / 경험형
+const TITLE_TYPE_ROTATION: TitleType[] = ['Q', 'NUM', 'EXP', 'N', 'Q', 'EXP', 'NUM', 'N', 'EXP', 'Q']
+
+const TITLE_FORMULAS: Record<string, { patterns: { text: string; type: TitleType }[]; examples: (kw: string) => string[] }> = {
   // 통증/공포 관련
   pain_fear: {
     patterns: [
-      '~할 때 알아야 할 3가지',
-      '~전에 반드시 확인하세요',
-      '~경험자가 말하는 현실적 이야기',
-      '~공포, 알고 나면 별거 아닙니다',
-      '2026년 ~가이드: 전문의가 정리한 핵심',
-      '~때문에 잠 못 이루는 분께 드리는 답변',
-      '~오해와 진실, 데이터로 확인하기',
+      { text: '~, 실제로 얼마나 아플까?', type: 'Q' },                    // 의문형
+      { text: '~전에 반드시 확인할 체크리스트', type: 'N' },              // 명사형
+      { text: '~받기 전 알아야 할 3가지', type: 'NUM' },                  // 숫자형
+      { text: '~경험자가 말하는 현실적 후기', type: 'EXP' },              // 경험형
+      { text: '~, 공포의 실체와 실제 데이터', type: 'N' },               // 명사형
+      { text: '~밤새 검색한 분께 드리는 팩트', type: 'EXP' },            // 경험형
+      { text: '~발생률 몇 %? 수치로 보는 현실', type: 'NUM' },           // 숫자형
+      { text: '~미루는 게 나을까, 바로 받는 게 나을까?', type: 'Q' },    // 의문형
     ],
     examples: (kw) => [
-      `${kw} 받기 전에 알아야 할 3가지`,
-      `${kw} 전에 반드시 확인하세요 — 전문의 체크리스트`,
-      `${kw} 경험자가 말하는 현실적 이야기`,
-      `${kw} 공포, 알고 나면 별거 아닙니다 — 실제 데이터 공개`,
-      `2026년 ${kw} 완전 가이드: 전문의가 정리한 핵심`,
-      `${kw} 때문에 잠 못 이루는 분께 드리는 답변`,
-      `${kw} 오해와 진실 — 발생률 2~3%의 실체`,
+      `${kw}, 실제로 얼마나 아플까? 환자 데이터 공개`,
+      `${kw} 전에 반드시 확인할 체크리스트`,
+      `${kw} 받기 전 알아야 할 3가지 핵심`,
+      `${kw} 경험자가 말하는 현실적 후기`,
+      `${kw}의 공포, 실체와 실제 데이터`,
+      `${kw} 밤새 검색한 분께 드리는 팩트`,
+      `${kw} 발생률 몇 %? 수치로 보는 현실`,
+      `${kw}, 미루는 게 나을까 바로 받는 게 나을까?`,
     ]
   },
   // 선택/비교 관련
   comparison: {
     patterns: [
-      '~차이점 한눈에 비교하기',
-      '~선택 기준: 이것만 알면 됩니다',
-      '~결정 전 체크리스트 5가지',
-      '~장단점 비교표 — 2026년 최신판',
-      '~고민이라면 이 기준으로 판단하세요',
-      '~뭘 골라야 할지 모르겠다면 읽어보세요',
+      { text: '~, 뭐가 어떻게 다를까?', type: 'Q' },
+      { text: '~선택 전 필수 판단 기준', type: 'N' },
+      { text: '~결정 전 체크포인트 5가지', type: 'NUM' },
+      { text: '~실제로 써본 사람들의 비교 후기', type: 'EXP' },
+      { text: '~장단점 한눈에 비교', type: 'N' },
+      { text: '~고민 중이라면 이 기준 하나로 판단하세요', type: 'EXP' },
+      { text: '~어떤 게 내 상황에 맞을까?', type: 'Q' },
+      { text: '~3분이면 결정할 수 있는 비교 분석', type: 'NUM' },
     ],
     examples: (kw) => [
-      `${kw} 차이점 한눈에 비교하기`,
-      `${kw} 선택 기준: 이것만 알면 됩니다`,
-      `${kw} 결정 전 체크리스트 5가지`,
-      `${kw} 장단점 비교표 — 2026년 최신판`,
-      `${kw} 고민이라면 이 기준으로 판단하세요`,
-      `${kw} 뭘 골라야 할지 모르겠다면 읽어보세요`,
+      `${kw}, 뭐가 어떻게 다를까? 핵심 비교`,
+      `${kw} 선택 전 필수 판단 기준`,
+      `${kw} 결정 전 체크포인트 5가지`,
+      `${kw} 실제로 써본 사람들의 비교 후기`,
+      `${kw} 장단점 한눈에 비교`,
+      `${kw} 고민 중이라면 이 기준 하나로 판단하세요`,
+      `${kw} 어떤 게 내 상황에 맞을까?`,
+      `${kw} 3분이면 결정할 수 있는 비교 분석`,
     ]
   },
   // 과정/방법
   process: {
     patterns: [
-      '~전체 과정, 첫 방문부터 완료까지',
-      '~이렇게 진행됩니다 — 단계별 설명',
-      '~타임라인: 당일부터 6개월 후까지',
-      '~전에 꼭 준비해야 할 것들',
-      '~A부터 Z까지 전문의가 알려드립니다',
-      '~절차가 궁금하다면 이 글 하나로 충분합니다',
+      { text: '~, 어떻게 진행될까?', type: 'Q' },
+      { text: '~첫 방문부터 마무리까지 전체 흐름', type: 'N' },
+      { text: '~단계별 타임라인: 당일~6개월', type: 'NUM' },
+      { text: '~처음 받아본 사람이 알려주는 실제 과정', type: 'EXP' },
+      { text: '~전에 꼭 준비해야 할 것들', type: 'N' },
+      { text: '~절차가 궁금하다면 이 글이면 충분합니다', type: 'EXP' },
+      { text: '~소요 시간과 횟수, 현실적으로 알려드립니다', type: 'NUM' },
+      { text: '~마취부터 퇴원까지 궁금한 것들', type: 'Q' },
     ],
     examples: (kw) => [
-      `${kw} 전체 과정 — 첫 방문부터 완료까지`,
-      `${kw}, 이렇게 진행됩니다 — 단계별 설명`,
-      `${kw} 타임라인: 당일부터 6개월 후까지`,
-      `${kw} 전에 꼭 준비해야 할 것들 — 2026년 기준`,
-      `${kw} A부터 Z까지, 전문의가 정리한 핵심`,
-      `${kw} 절차가 궁금하다면 이 글 하나로 충분합니다`,
+      `${kw}, 어떻게 진행될까? 전체 과정 설명`,
+      `${kw} 첫 방문부터 마무리까지 전체 흐름`,
+      `${kw} 단계별 타임라인: 당일부터 6개월까지`,
+      `${kw} 처음 받아본 사람이 알려주는 실제 과정`,
+      `${kw} 전에 꼭 준비해야 할 것들`,
+      `${kw} 절차가 궁금하다면 이 글이면 충분합니다`,
+      `${kw} 소요 시간과 횟수, 현실적으로 알려드립니다`,
+      `${kw} 마취부터 퇴원까지 궁금한 것들`,
     ]
   },
   // 필요성/판단
   necessity: {
     patterns: [
-      '~미루면 생기는 일, 솔직히 말씀드립니다',
-      '~해야 할까 말아야 할까? 판단 기준 정리',
-      '~안 하면 어떻게 될까? 5년 후 시나리오',
-      '~시기를 놓치면 달라지는 것들',
-      '~고민 중이라면 이 글을 먼저 읽으세요',
-      '~지금이 적기인지 확인하는 자가진단법',
+      { text: '~, 꼭 해야 할까?', type: 'Q' },
+      { text: '~미루면 벌어지는 일들', type: 'N' },
+      { text: '~판단 기준 3가지와 자가진단법', type: 'NUM' },
+      { text: '~미뤘다가 후회한 사람들의 공통점', type: 'EXP' },
+      { text: '~시기를 놓치면 달라지는 것들', type: 'N' },
+      { text: '~실제로 안 하면 어떻게 될까?', type: 'Q' },
+      { text: '~결심이 안 선다면 이 질문에 답해보세요', type: 'EXP' },
+      { text: '~방치했을 때 1년·3년·5년 후 변화', type: 'NUM' },
     ],
     examples: (kw) => [
-      `${kw} 미루면 생기는 일 — 솔직히 말씀드립니다`,
-      `${kw}, 해야 할까 말아야 할까? 판단 기준 정리`,
-      `${kw} 안 하면 어떻게 될까? 5년 후 시나리오`,
+      `${kw}, 꼭 해야 할까? 솔직한 판단 기준`,
+      `${kw} 미루면 벌어지는 일들`,
+      `${kw} 판단 기준 3가지와 자가진단법`,
+      `${kw} 미뤘다가 후회한 사람들의 공통점`,
       `${kw} 시기를 놓치면 달라지는 것들`,
-      `${kw} 고민 중이라면 이 글을 먼저 읽으세요`,
-      `${kw}, 지금이 적기인지 확인하는 자가진단법`,
+      `${kw}, 실제로 안 하면 어떻게 될까?`,
+      `${kw} 결심이 안 선다면 이 질문에 답해보세요`,
+      `${kw} 방치했을 때 1년·3년·5년 후 변화`,
     ]
   },
   // 회복/관리
   recovery: {
     patterns: [
-      '~후 회복 일지: 1일차부터 한 달까지',
-      '~후 이런 증상, 정상일까 위험 신호일까?',
-      '~후 관리법 — 회복 빠른 사람들의 공통점',
-      '~다음 날 겪는 것들과 대처법',
-      '~후 음식, 운동, 일상생활 복귀 타임라인',
-      '~회복 중 하면 안 되는 것 5가지',
+      { text: '~후 이 증상, 정상일까 위험 신호일까?', type: 'Q' },
+      { text: '~후 관리법과 회복 빠른 사람들의 비결', type: 'N' },
+      { text: '~후 1일·1주·1개월 회복 타임라인', type: 'NUM' },
+      { text: '~받고 나서 실제로 겪은 일들', type: 'EXP' },
+      { text: '~후 하면 안 되는 것들', type: 'N' },
+      { text: '~후 음식·운동·일상 복귀는 언제부터?', type: 'Q' },
+      { text: '~후 빠른 회복을 위한 5가지 습관', type: 'NUM' },
+      { text: '~다음 날부터 일주일, 실제 회복 경험담', type: 'EXP' },
     ],
     examples: (kw) => [
-      `${kw} 후 회복 일지: 1일차부터 한 달까지`,
-      `${kw} 후 이런 증상, 정상일까 위험 신호일까?`,
-      `${kw} 후 관리법 — 회복 빠른 사람들의 공통점`,
-      `${kw} 다음 날 겪는 것들과 현실적 대처법`,
-      `${kw} 후 음식, 운동, 일상 복귀 타임라인`,
-      `${kw} 회복 중 하면 안 되는 것 5가지`,
+      `${kw} 후 이 증상, 정상일까 위험 신호일까?`,
+      `${kw} 후 관리법과 회복 빠른 사람들의 비결`,
+      `${kw} 후 1일·1주·1개월 회복 타임라인`,
+      `${kw} 받고 나서 실제로 겪은 일들`,
+      `${kw} 후 하면 안 되는 것들`,
+      `${kw} 후 음식·운동·일상 복귀는 언제부터?`,
+      `${kw} 후 빠른 회복을 위한 5가지 습관`,
+      `${kw} 다음 날부터 일주일, 실제 회복 경험담`,
     ]
   },
   // 일반 (fallback)
   general: {
     patterns: [
-      '~에 대해 가장 많이 묻는 질문 7가지',
-      '~완전 정리 — 2026년 최신 기준',
-      '~첫 경험이라면 이것부터 확인하세요',
-      '~핵심만 정리: 전문의가 쓴 환자용 안내서',
-      '~알아야 할 모든 것, 한 글에 담았습니다',
-      '~검색하다 지친 분을 위한 팩트 정리',
+      { text: '~에 대해 가장 많이 묻는 질문들', type: 'Q' },
+      { text: '~첫 경험이라면 이것부터 확인하세요', type: 'N' },
+      { text: '~전문의가 쓴 환자용 팩트 정리', type: 'N' },
+      { text: '~검색하다 지친 분께 드리는 팩트', type: 'EXP' },
+      { text: '~처음이라 막막하다면 읽어보세요', type: 'EXP' },
+      { text: '~환자가 꼭 알아야 할 5가지', type: 'NUM' },
+      { text: '~이것만 알면 치과 상담이 편해집니다', type: 'Q' },
+      { text: '~3분 안에 핵심만 파악하기', type: 'NUM' },
     ],
     examples: (kw) => [
-      `${kw}에 대해 가장 많이 묻는 질문 7가지`,
-      `${kw} 완전 정리 — 2026년 최신 기준`,
+      `${kw}에 대해 가장 많이 묻는 질문들`,
       `${kw} 첫 경험이라면 이것부터 확인하세요`,
-      `${kw} 핵심만 정리: 전문의가 쓴 환자용 안내서`,
-      `${kw} 알아야 할 모든 것, 한 글에 담았습니다`,
-      `${kw} 검색하다 지친 분을 위한 팩트 정리`,
+      `${kw} 전문의가 쓴 환자용 팩트 정리`,
+      `${kw} 검색하다 지친 분께 드리는 팩트`,
+      `${kw} 처음이라 막막하다면 읽어보세요`,
+      `${kw} 환자가 꼭 알아야 할 5가지`,
+      `${kw}, 이것만 알면 치과 상담이 편해집니다`,
+      `${kw} 3분 안에 핵심만 파악하기`,
     ]
   }
 }
@@ -213,27 +238,49 @@ function classifyKeywordIntent(keyword: string, contentType: string): string {
 
 async function getNextTitleFormula(
   db: D1Database, keyword: string, contentType: string
-): Promise<{ pattern: string; example: string; emotion: string; intent: string }> {
+): Promise<{ pattern: string; example: string; emotion: string; intent: string; titleType: string }> {
   const intent = classifyKeywordIntent(keyword, contentType)
   const formulaSet = TITLE_FORMULAS[intent] || TITLE_FORMULAS.general
   
-  // 같은 intent 내에서 로테이션 (DB 카운터)
-  const rotKey = `title_formula_idx_${intent}`
-  const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(rotKey).first()
-  let idx = parseInt(row?.value as string || '0')
-  if (isNaN(idx) || idx >= formulaSet.patterns.length) idx = 0
+  // 1단계: 이번에 써야 할 제목 형태(Q/N/NUM/EXP) 결정 — 글로벌 로테이션
+  const typeRotKey = 'title_type_rotation_idx'
+  const typeRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(typeRotKey).first()
+  let typeIdx = parseInt(typeRow?.value as string || '0')
+  if (isNaN(typeIdx) || typeIdx >= TITLE_TYPE_ROTATION.length) typeIdx = 0
+  const requiredType = TITLE_TYPE_ROTATION[typeIdx]
+  const nextTypeIdx = (typeIdx + 1) % TITLE_TYPE_ROTATION.length
   
-  const pattern = formulaSet.patterns[idx]
-  const example = formulaSet.examples(keyword)[idx]
-  const nextIdx = (idx + 1) % formulaSet.patterns.length
-  
-  if (row) {
-    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?").bind(String(nextIdx), rotKey).run()
+  if (typeRow) {
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?").bind(String(nextTypeIdx), typeRotKey).run()
   } else {
-    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(rotKey, String(nextIdx), `제목 공식 로테이션 v4 (${intent})`).run()
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(typeRotKey, String(nextTypeIdx), '제목 형태 Q/N/NUM/EXP 글로벌 로테이션').run()
   }
   
-  return { pattern, example, emotion: intent, intent }
+  // 2단계: 해당 형태의 패턴 중에서 로테이션 선택
+  const matchingPatterns = formulaSet.patterns
+    .map((p, i) => ({ ...p, originalIdx: i }))
+    .filter(p => p.type === requiredType)
+  
+  // 해당 형태가 없으면 (거의 없겠지만) 전체 풀에서 선택
+  const candidates = matchingPatterns.length > 0 ? matchingPatterns : formulaSet.patterns.map((p, i) => ({ ...p, originalIdx: i }))
+  
+  const innerRotKey = `title_formula_inner_${intent}_${requiredType}`
+  const innerRow = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(innerRotKey).first()
+  let innerIdx = parseInt(innerRow?.value as string || '0')
+  if (isNaN(innerIdx) || innerIdx >= candidates.length) innerIdx = 0
+  
+  const selected = candidates[innerIdx]
+  const pattern = selected.text
+  const example = formulaSet.examples(keyword)[selected.originalIdx]
+  const nextInnerIdx = (innerIdx + 1) % candidates.length
+  
+  if (innerRow) {
+    await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?").bind(String(nextInnerIdx), innerRotKey).run()
+  } else {
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(innerRotKey, String(nextInnerIdx), `제목 패턴 로테이션 v5 (${intent}/${requiredType})`).run()
+  }
+  
+  return { pattern, example, emotion: intent, intent, titleType: requiredType }
 }
 
 async function getNextContentType(db: D1Database): Promise<{ type: 'B' | 'C' | 'D' | 'E' | 'F'; index: number }> {
@@ -418,9 +465,40 @@ cronApp.post('/', async (c) => {
     keywords.push(...extraFiltered, ...extraFallback)
   }
 
-  const selectedKeywords = keywords.slice(0, count)
+  // ===== v5: 카테고리 연속 발행 방지 — 같은 카테고리 2연속 금지 =====
+  const rawSelected = keywords.slice(0, count)
+  
+  // 최근 발행된 콘텐츠의 카테고리 확인
+  const recentPost = await c.env.DB.prepare(
+    `SELECT k.category FROM contents c 
+     LEFT JOIN keywords k ON c.keyword_id = k.id 
+     WHERE c.status IN ('published', 'draft') 
+     ORDER BY c.created_at DESC LIMIT 1`
+  ).first()
+  const lastCategory = recentPost?.category as string || ''
+  
+  // 카테고리 분산 정렬: 같은 카테고리가 연속되지 않도록 재배치
+  const selectedKeywords: any[] = []
+  const remaining = [...rawSelected]
+  let prevCat = lastCategory
+  
+  while (remaining.length > 0) {
+    // 이전과 다른 카테고리 우선 선택
+    const diffCatIdx = remaining.findIndex(k => (k.category || 'general') !== prevCat)
+    if (diffCatIdx !== -1) {
+      const picked = remaining.splice(diffCatIdx, 1)[0]
+      selectedKeywords.push(picked)
+      prevCat = picked.category || 'general'
+    } else {
+      // 전부 같은 카테고리면 어쩔 수 없이 넣음
+      const picked = remaining.shift()
+      selectedKeywords.push(picked)
+      prevCat = picked.category || 'general'
+    }
+  }
+  
   const results: any[] = []
-  console.log(`[Cron] count=${count}, keywords pool=${keywords.length}, selected=${selectedKeywords.length}, isManual=${isManual}`)
+  console.log(`[Cron] count=${count}, keywords pool=${keywords.length}, selected=${selectedKeywords.length}, isManual=${isManual}, prevCat=${lastCategory}`)
 
   // Inblog API 정보 사전 검증 (자동 발행 시)
   let inblogApiInfo: any = null
@@ -467,9 +545,9 @@ cronApp.post('/', async (c) => {
       // 내부 링크용 기존 발행글 목록 조회
       const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
-      // 제목 공식 v4 — 키워드 의도(intent) 기반 다양화
+      // 제목 공식 v5 — 4형태 강제 혼용 + 남용 키워드 제거
       const titleFormula = await getNextTitleFormula(c.env.DB, kw.keyword, classified.type)
-      console.log(`[제목v4] intent=${titleFormula.intent}, pattern="${titleFormula.pattern}" (${kw.keyword})`)
+      console.log(`[제목v5] type=${titleFormula.titleType}, intent=${titleFormula.intent}, pattern="${titleFormula.pattern}" (${kw.keyword})`)
 
       // 환자 페르소나 선택 — 같은 키워드도 페르소나에 따라 내용이 달라진다
       const todayCount = await c.env.DB.prepare(
@@ -821,7 +899,7 @@ ${tocItems}</ol>
   }
 })
 
-// ===== Claude API 호출 (v4 — 제목 다양화 + 페르소나 + 지역명 본문만) =====
+// ===== Claude API 호출 (v5.1 — 절대 스팸 불가 + 제목 사후검증 + 남용키워드/지역명/연도 자동제거) =====
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
   contentType: string, typeGuide: string, patientQuestion: string, emotion?: string,
@@ -870,13 +948,16 @@ ${postList}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 검색하게 된 마음: ${patientQuestion}
 ${personaBlock}
-🎯 **제목 작성 가이드 v4** — 패턴 반복을 깨는 다양한 제목
+🎯 **제목 작성 가이드 v5.1** — 4형태 강제 혼용 + 남용 키워드 완전 금지
+- ⚠️ **이번 제목 형태: ${(titleFormula as any)?.titleType === 'Q' ? '의문형 (물음표로 끝나는 질문)' : (titleFormula as any)?.titleType === 'N' ? '명사형 (명사/명사구로 끝남)' : (titleFormula as any)?.titleType === 'NUM' ? '숫자형 (구체적 숫자 포함)' : '경험형 (경험·후기·실제 뉘앙스)'}** ← 반드시 이 형태로 쓰세요!
 - 이번 제목 공식: "${titleFormula?.pattern || '~에 대해 알아야 할 것'}"
-- 예시: "${titleFormula?.example || `${keyword} 완전 정리 — 2026년 최신 기준`}"
-- ⚠️ **제목에 지역명을 넣지 마세요** (지역명은 본문에만 자연스럽게 삽입)
-- ⚠️ **"~무서울까?" "~아플까?" "~괜찮을까?" 패턴만 쓰지 마세요** — 위 공식을 따르세요
-- 키워드 의미와 어울리는, 환자가 실제 검색창에 칠 법한 자연스러운 문장이어야 합니다
-- 숫자 또는 연도(2026)를 포함하면 CTR이 높아집니다
+- 예시: "${titleFormula?.example || `${keyword}, 실제로 어떤가요?`}"
+- ⚠️ **제목에 지역명 금지** (본문에서만)
+- ⚠️ **제목 남용 완전 금지 단어** (하나라도 있으면 Google이 scaled content로 판정):
+  "가이드", "총정리", "완전 정리", "모든 것", "A부터 Z", "완벽", "2026", "2026년",
+  "꼭 알아야 할", "핵심 정리", "완벽 정리", "~하는 법"
+  → 이 단어가 제목에 있으면 전체 글이 스팸으로 판정됩니다. 절대 사용 금지.
+- 환자가 실제 검색창에 칠 법한 자연스러운 문장이어야 합니다
 
 ${region ? `## 지역 정보 (본문에만 자연 삽입 — 제목 금지)
 지역: ${region}
@@ -1014,10 +1095,40 @@ ${internalLinksBlock}
       const plainText = contentHtml.replace(/<[^>]*>/g, '')
       console.log(`[Claude] ${model.label} 성공! (${plainText.length}자)`)
 
+      // === v5.1: 제목 사후검증 — 남용 키워드 자동 제거 ===
+      let finalTitle = parsed.title || keyword
+      const TITLE_BANNED_POST = ['가이드', '총정리', '완전 정리', '모든 것', 'A부터 Z', '완벽 정리', '완벽', '핵심 정리']
+      for (const banned of TITLE_BANNED_POST) {
+        if (finalTitle.includes(banned)) {
+          console.warn(`[v5.1 제목검증] "${banned}" 발견 → 제거`)
+          finalTitle = finalTitle.replace(new RegExp(banned, 'g'), '').replace(/\s{2,}/g, ' ').trim()
+        }
+      }
+      // 연도 제거 (2026년, 2026 등)
+      if (/202[0-9]년?/.test(finalTitle)) {
+        console.warn(`[v5.1 제목검증] 연도 발견 → 제거`)
+        finalTitle = finalTitle.replace(/\s*202[0-9]년?\s*/g, ' ').replace(/\s{2,}/g, ' ').trim()
+      }
+      // 지역명 제거
+      const REGIONS_POST = ['대전','세종','청주','천안','아산','서산','당진','논산','공주','보령','제천','충주','홍성','예산','음성','진천','괴산','옥천','영동','금산']
+      for (const r of REGIONS_POST) {
+        if (finalTitle.includes(r)) {
+          console.warn(`[v5.1 제목검증] 지역명 "${r}" 발견 → 제거`)
+          finalTitle = finalTitle.replace(new RegExp(r, 'g'), '').replace(/\s{2,}/g, ' ').trim()
+        }
+      }
+      // 메타 디스크립션에서도 지역명 제거
+      let finalMeta = parsed.meta_description || ''
+      for (const r of REGIONS_POST) {
+        if (finalMeta.includes(r)) {
+          finalMeta = finalMeta.replace(new RegExp(r, 'g'), '').replace(/\s{2,}/g, ' ').trim()
+        }
+      }
+
       return {
-        title: parsed.title || keyword,
+        title: finalTitle,
         slug: parsed.slug || keyword.replace(/\s+/g, '-'),
-        meta_description: parsed.meta_description || '',
+        meta_description: finalMeta,
         content_html: contentHtml,
         tags: parsed.tags || [],
         faq: parsed.faq || [],
