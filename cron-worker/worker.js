@@ -111,10 +111,10 @@ export default {
       }
     }
 
-    return new Response(`Inblog AutoPublish Cron Worker v2
+    return new Response(`Inblog AutoPublish Cron Worker v3
 
-Schedule: KST 02:00, 03:00, 04:00, 05:00, 05:30 (±15min random)
-Target: ${DAILY_TARGET} posts/day before 6am KST
+Schedule: KST 02:00, 03:00, 04:00 (±15min random)
+Target: ${DAILY_TARGET} posts/day (v3: quality-first, Google spam update 대응)
 
 Features:
   - Time randomization (±15min)

@@ -37,41 +37,149 @@ async function getNextRegion(db: D1Database): Promise<{ region: string; index: n
 // ===== 콘텐츠 유형 로테이션 (균등 배분 - 비용/가격 제외) =====
 const CONTENT_TYPE_ROTATION: Array<'B' | 'C' | 'D' | 'E' | 'F'> = ['B', 'C', 'E', 'D', 'F', 'B', 'E', 'C', 'F', 'B']
 
-// ===== 제목 감정 패턴 — 키워드 의도(intent) 기반 자동 매칭 =====
-// 키워드 의미에 맞지 않는 감정 패턴을 강제하면 "임플란트 종류, 아플까?" 같은 부자연스러운 제목이 나옴
-// → 키워드가 표현하는 환자의 '진짜 궁금증'에 맞는 패턴만 후보로 제시
+// ===== 제목 공식 다양화 시스템 v4 — SpamBrain 패턴 회피 =====
+// 핵심 원칙: "[키워드] + [감정어] + [지역명]" 공식 반복 금지
+// → 10가지 이상의 제목 공식을 키워드 의도(intent)별로 매핑
+// → 지역명은 제목에서 완전 제거, 본문에만 자연 삽입
 
-const TITLE_EMOTION_MAP: Record<string, { patterns: string[]; examples: (kw: string) => string[] }> = {
-  // 통증/공포 관련 키워드
+const TITLE_FORMULAS: Record<string, { patterns: string[]; examples: (kw: string) => string[] }> = {
+  // 통증/공포 관련
   pain_fear: {
-    patterns: ['무서울까?', '아플까?', '괜찮을까?'],
-    examples: (kw) => [`${kw}, 정말 무서울까?`, `${kw}, 많이 아플까?`, `${kw}, 괜찮을까?`]
+    patterns: [
+      '~할 때 알아야 할 3가지',
+      '~전에 반드시 확인하세요',
+      '~경험자가 말하는 현실적 이야기',
+      '~공포, 알고 나면 별거 아닙니다',
+      '2026년 ~가이드: 전문의가 정리한 핵심',
+      '~때문에 잠 못 이루는 분께 드리는 답변',
+      '~오해와 진실, 데이터로 확인하기',
+    ],
+    examples: (kw) => [
+      `${kw} 받기 전에 알아야 할 3가지`,
+      `${kw} 전에 반드시 확인하세요 — 전문의 체크리스트`,
+      `${kw} 경험자가 말하는 현실적 이야기`,
+      `${kw} 공포, 알고 나면 별거 아닙니다 — 실제 데이터 공개`,
+      `2026년 ${kw} 완전 가이드: 전문의가 정리한 핵심`,
+      `${kw} 때문에 잠 못 이루는 분께 드리는 답변`,
+      `${kw} 오해와 진실 — 발생률 2~3%의 실체`,
+    ]
   },
-  // 선택/비교 관련 키워드
+  // 선택/비교 관련
   comparison: {
-    patterns: ['뭐가 다를까?', '어떤 걸 선택해야 할까?', '나에게 맞는 건?'],
-    examples: (kw) => [`${kw}, 뭐가 다를까?`, `${kw}, 어떤 걸 선택해야 할까?`, `${kw}, 나에게 맞는 건?`]
+    patterns: [
+      '~차이점 한눈에 비교하기',
+      '~선택 기준: 이것만 알면 됩니다',
+      '~결정 전 체크리스트 5가지',
+      '~장단점 비교표 — 2026년 최신판',
+      '~고민이라면 이 기준으로 판단하세요',
+      '~뭘 골라야 할지 모르겠다면 읽어보세요',
+    ],
+    examples: (kw) => [
+      `${kw} 차이점 한눈에 비교하기`,
+      `${kw} 선택 기준: 이것만 알면 됩니다`,
+      `${kw} 결정 전 체크리스트 5가지`,
+      `${kw} 장단점 비교표 — 2026년 최신판`,
+      `${kw} 고민이라면 이 기준으로 판단하세요`,
+      `${kw} 뭘 골라야 할지 모르겠다면 읽어보세요`,
+    ]
   },
-  // 과정/방법 관련 키워드
+  // 과정/방법
   process: {
-    patterns: ['어떻게 진행되나요?', '얼마나 걸릴까?', '무서울까?'],
-    examples: (kw) => [`${kw}, 어떻게 진행되나요?`, `${kw}, 얼마나 걸릴까?`, `${kw}, 정말 무서울까?`]
+    patterns: [
+      '~전체 과정, 첫 방문부터 완료까지',
+      '~이렇게 진행됩니다 — 단계별 설명',
+      '~타임라인: 당일부터 6개월 후까지',
+      '~전에 꼭 준비해야 할 것들',
+      '~A부터 Z까지 전문의가 알려드립니다',
+      '~절차가 궁금하다면 이 글 하나로 충분합니다',
+    ],
+    examples: (kw) => [
+      `${kw} 전체 과정 — 첫 방문부터 완료까지`,
+      `${kw}, 이렇게 진행됩니다 — 단계별 설명`,
+      `${kw} 타임라인: 당일부터 6개월 후까지`,
+      `${kw} 전에 꼭 준비해야 할 것들 — 2026년 기준`,
+      `${kw} A부터 Z까지, 전문의가 정리한 핵심`,
+      `${kw} 절차가 궁금하다면 이 글 하나로 충분합니다`,
+    ]
   },
-  // 필요성/판단 관련 키워드
+  // 필요성/판단
   necessity: {
-    patterns: ['꼭 해야 하나요?', '안 하면 어떻게 되나요?', '미루면 괜찮을까?'],
-    examples: (kw) => [`${kw}, 꼭 해야 하나요?`, `${kw} 안 하면 어떻게 되나요?`, `${kw}, 미루면 괜찮을까?`]
+    patterns: [
+      '~미루면 생기는 일, 솔직히 말씀드립니다',
+      '~해야 할까 말아야 할까? 판단 기준 정리',
+      '~안 하면 어떻게 될까? 5년 후 시나리오',
+      '~시기를 놓치면 달라지는 것들',
+      '~고민 중이라면 이 글을 먼저 읽으세요',
+      '~지금이 적기인지 확인하는 자가진단법',
+    ],
+    examples: (kw) => [
+      `${kw} 미루면 생기는 일 — 솔직히 말씀드립니다`,
+      `${kw}, 해야 할까 말아야 할까? 판단 기준 정리`,
+      `${kw} 안 하면 어떻게 될까? 5년 후 시나리오`,
+      `${kw} 시기를 놓치면 달라지는 것들`,
+      `${kw} 고민 중이라면 이 글을 먼저 읽으세요`,
+      `${kw}, 지금이 적기인지 확인하는 자가진단법`,
+    ]
   },
-  // 회복/관리 관련 키워드
+  // 회복/관리
   recovery: {
-    patterns: ['괜찮을까?', '이러면 정상인가요?', '언제 나을까?'],
-    examples: (kw) => [`${kw} 후 괜찮을까?`, `${kw}, 이러면 정상인가요?`, `${kw}, 언제 나을까?`]
+    patterns: [
+      '~후 회복 일지: 1일차부터 한 달까지',
+      '~후 이런 증상, 정상일까 위험 신호일까?',
+      '~후 관리법 — 회복 빠른 사람들의 공통점',
+      '~다음 날 겪는 것들과 대처법',
+      '~후 음식, 운동, 일상생활 복귀 타임라인',
+      '~회복 중 하면 안 되는 것 5가지',
+    ],
+    examples: (kw) => [
+      `${kw} 후 회복 일지: 1일차부터 한 달까지`,
+      `${kw} 후 이런 증상, 정상일까 위험 신호일까?`,
+      `${kw} 후 관리법 — 회복 빠른 사람들의 공통점`,
+      `${kw} 다음 날 겪는 것들과 현실적 대처법`,
+      `${kw} 후 음식, 운동, 일상 복귀 타임라인`,
+      `${kw} 회복 중 하면 안 되는 것 5가지`,
+    ]
   },
-  // 일반/정보 키워드 (fallback)
+  // 일반 (fallback)
   general: {
-    patterns: ['괜찮을까?', '꼭 해야 하나요?', '어떻게 되나요?'],
-    examples: (kw) => [`${kw}, 괜찮을까?`, `${kw}, 꼭 해야 하나요?`, `${kw} 안 하면 어떻게 되나요?`]
+    patterns: [
+      '~에 대해 가장 많이 묻는 질문 7가지',
+      '~완전 정리 — 2026년 최신 기준',
+      '~첫 경험이라면 이것부터 확인하세요',
+      '~핵심만 정리: 전문의가 쓴 환자용 안내서',
+      '~알아야 할 모든 것, 한 글에 담았습니다',
+      '~검색하다 지친 분을 위한 팩트 정리',
+    ],
+    examples: (kw) => [
+      `${kw}에 대해 가장 많이 묻는 질문 7가지`,
+      `${kw} 완전 정리 — 2026년 최신 기준`,
+      `${kw} 첫 경험이라면 이것부터 확인하세요`,
+      `${kw} 핵심만 정리: 전문의가 쓴 환자용 안내서`,
+      `${kw} 알아야 할 모든 것, 한 글에 담았습니다`,
+      `${kw} 검색하다 지친 분을 위한 팩트 정리`,
+    ]
   }
+}
+
+// ===== 환자 페르소나 시스템 — 같은 키워드도 독자가 다르면 글이 달라진다 =====
+const PATIENT_PERSONAS = [
+  { age: '20대 대학생', trait: '처음 치과 치료를 받는', situation: '시험 기간이라 빨리 해결하고 싶은', context: '시간이 부족하고 비용 부담이 큰 학생' },
+  { age: '30대 직장인', trait: '바쁜 일상 속에서 치과를 미루다 온', situation: '연차 내기가 어려워 주말 진료를 알아보는', context: '시간 효율과 빠른 복귀가 중요한 직장인' },
+  { age: '40대 워킹맘', trait: '아이와 본인 치과 치료를 동시에 고민하는', situation: '남편에게 차마 말 못하고 혼자 검색 중인', context: '가사와 육아 사이에서 치료 시기를 고민하는 어머니' },
+  { age: '50대 자영업자', trait: '이를 악물고 일하다 더 이상 참을 수 없어진', situation: '가게를 오래 비울 수 없어서 걱정하는', context: '매출 걱정과 건강 걱정 사이에서 갈등하는 사장님' },
+  { age: '60대 은퇴자', trait: '당뇨/혈압약을 복용 중인', situation: '자녀가 걱정되니까 치과 가라고 하는', context: '전신 질환과 치과 치료의 관계가 걱정되는 어르신' },
+  { age: '70대 어르신', trait: '틀니가 불편해서 고정식을 알아보는', situation: '식사할 때마다 불편하고 손자 앞에서 당당하고 싶은', context: '씹는 즐거움을 되찾고 싶은 어르신' },
+  { age: '30대 임산부', trait: '임신 중 잇몸 출혈이 심해진', situation: '태아에게 영향이 갈까 봐 두려운', context: '태아 안전과 본인 치료 사이에서 고민하는 예비맘' },
+  { age: '40대 남성', trait: '치과 공포증이 심한', situation: '이미 한 번 안 좋은 경험이 있어서 더 무서운', context: '과거 트라우마로 치과를 수년간 피해온 분' },
+  { age: '50대 여성', trait: '갱년기 이후 치아가 약해진 것을 느끼는', situation: '거울 볼 때마다 자신감이 떨어지는', context: '호르몬 변화로 구강 건강이 급변한 분' },
+  { age: '20대 사회초년생', trait: '첫 월급으로 미뤘던 치과 치료를 결심한', situation: '어디서부터 시작해야 할지 모르는', context: '치과 시스템 자체가 낯설고 두려운 사회초년생' },
+]
+
+function getPatientPersona(keyword: string, contentId: number): typeof PATIENT_PERSONAS[0] {
+  // 키워드 해시 + contentId로 매번 다른 페르소나 선택
+  const hash = keyword.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+  const idx = (hash + contentId) % PATIENT_PERSONAS.length
+  return PATIENT_PERSONAS[idx]
 }
 
 // 키워드 → 의도(intent) 자동 분류
@@ -103,26 +211,26 @@ function classifyKeywordIntent(keyword: string, contentType: string): string {
   return 'general'
 }
 
-async function getNextTitleEmotion(
+async function getNextTitleFormula(
   db: D1Database, keyword: string, contentType: string
 ): Promise<{ pattern: string; example: string; emotion: string; intent: string }> {
   const intent = classifyKeywordIntent(keyword, contentType)
-  const emotionSet = TITLE_EMOTION_MAP[intent] || TITLE_EMOTION_MAP.general
+  const formulaSet = TITLE_FORMULAS[intent] || TITLE_FORMULAS.general
   
   // 같은 intent 내에서 로테이션 (DB 카운터)
-  const rotKey = `title_emotion_idx_${intent}`
+  const rotKey = `title_formula_idx_${intent}`
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(rotKey).first()
   let idx = parseInt(row?.value as string || '0')
-  if (isNaN(idx) || idx >= emotionSet.patterns.length) idx = 0
+  if (isNaN(idx) || idx >= formulaSet.patterns.length) idx = 0
   
-  const pattern = emotionSet.patterns[idx]
-  const example = emotionSet.examples(keyword)[idx]
-  const nextIdx = (idx + 1) % emotionSet.patterns.length
+  const pattern = formulaSet.patterns[idx]
+  const example = formulaSet.examples(keyword)[idx]
+  const nextIdx = (idx + 1) % formulaSet.patterns.length
   
   if (row) {
     await db.prepare("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = ?").bind(String(nextIdx), rotKey).run()
   } else {
-    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(rotKey, String(nextIdx), `제목 감정 로테이션 (${intent})`).run()
+    await db.prepare("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)").bind(rotKey, String(nextIdx), `제목 공식 로테이션 v4 (${intent})`).run()
   }
   
   return { pattern, example, emotion: intent, intent }
@@ -345,12 +453,30 @@ cronApp.post('/', async (c) => {
         : await getNextRegion(c.env.DB)          // 없으면 충청권 로테이션
       const region = regionInfo.region
 
+      // ===== v3: 지역 콘텐츠 중복 방지 — 같은 키워드가 14일 내 다른 도시로 발행되었는지 체크 =====
+      const recentSameKeyword = await c.env.DB.prepare(
+        `SELECT COUNT(*) as cnt FROM contents 
+         WHERE keyword_text = ? AND created_at > datetime('now', '-14 days')`
+      ).bind(kw.keyword).first()
+      if ((recentSameKeyword?.cnt as number) > 0 && !isManual) {
+        console.log(`[v3 중복방지] 키워드 "${kw.keyword}"가 14일 내 이미 발행됨, 스킵`)
+        // used_count 올리지 않고 다음 키워드로
+        continue
+      }
+
       // 내부 링크용 기존 발행글 목록 조회
       const existingPosts = await getPublishedPosts(c.env.DB, kw.keyword)
 
-      // 제목 감정 패턴 — 키워드 의도(intent) 기반 자동 매칭
-      const titleEmotion = await getNextTitleEmotion(c.env.DB, kw.keyword, classified.type)
-      console.log(`[감정매칭] intent=${titleEmotion.intent}, pattern="${titleEmotion.pattern}" (${kw.keyword})`)
+      // 제목 공식 v4 — 키워드 의도(intent) 기반 다양화
+      const titleFormula = await getNextTitleFormula(c.env.DB, kw.keyword, classified.type)
+      console.log(`[제목v4] intent=${titleFormula.intent}, pattern="${titleFormula.pattern}" (${kw.keyword})`)
+
+      // 환자 페르소나 선택 — 같은 키워드도 페르소나에 따라 내용이 달라진다
+      const todayCount = await c.env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM contents WHERE created_at > datetime('now', '-1 day')"
+      ).first()
+      const persona = getPatientPersona(kw.keyword, (todayCount?.cnt as number) || 0)
+      console.log(`[페르소나] ${persona.age} / ${persona.trait} (${kw.keyword})`)
 
       // Claude API 호출 (1회 — 내부에서 Opus→Sonnet 자동 폴백)
       let bestContent: any = null
@@ -360,7 +486,7 @@ cronApp.post('/', async (c) => {
         const generated = await callClaude(
           claudeApiKey, kw.keyword, region, disclaimer,
           classified.type, typeGuide, classified.question, classified.emotion,
-          existingPosts, titleEmotion
+          existingPosts, titleFormula, persona
         )
         const seoScore = calculateSeoScore(generated, kw.keyword)
         bestContent = { ...generated, seo_score: seoScore, attempts }
@@ -695,12 +821,13 @@ ${tocItems}</ol>
   }
 })
 
-// ===== Claude API 호출 (환자 공감형 v2 + 내부 링크) =====
+// ===== Claude API 호출 (v4 — 제목 다양화 + 페르소나 + 지역명 본문만) =====
 async function callClaude(
   apiKey: string, keyword: string, region: string, disclaimer: string,
   contentType: string, typeGuide: string, patientQuestion: string, emotion?: string,
   existingPosts?: { title: string; slug: string; keyword: string; category: string }[],
-  titleEmotion?: { pattern: string; example: string; emotion: string }
+  titleFormula?: { pattern: string; example: string; emotion: string },
+  persona?: { age: string; trait: string; situation: string; context: string }
 ) {
   const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer, emotion)
 
@@ -722,22 +849,44 @@ ${postList}
 `
   }
 
+  // 환자 페르소나 블록 (핵심: 독자가 다르면 글이 달라진다)
+  const personaBlock = persona ? `
+## 🎯 이 글의 독자 (환자 페르소나) — 반드시 이 사람을 상상하며 쓰세요
+- **연령/직업**: ${persona.age}
+- **특징**: ${persona.trait}
+- **상황**: ${persona.situation}
+- **맥락**: ${persona.context}
+
+이 페르소나를 반영하는 방법:
+- 도입부에서 이 환자의 상황을 자연스럽게 묘사 ("${persona.age}인 분이 ${persona.situation}")
+- 이 환자가 특히 궁금해할 포인트를 중심으로 서술
+- 이 환자의 생활 패턴에 맞는 실용적 조언 포함
+- FAQ에 이 페르소나가 할 법한 질문 1~2개 포함
+- ⚠️ 페르소나를 억지로 반복 언급하지 말고, 글의 톤과 관점에 자연스럽게 녹이세요
+` : ''
+
   const userPrompt = `키워드: ${keyword}
 콘텐츠 유형: ${contentType === 'A' ? '비용/가격 정보' : contentType === 'B' ? '시술 과정/방법' : contentType === 'C' ? '회복/주의사항' : contentType === 'D' ? '비교/선택' : '불안/공포 해소'}
 환자의 감정: ${emotion || '불안·걱정'}
 환자가 검색하게 된 마음: ${patientQuestion}
+${personaBlock}
+🎯 **제목 작성 가이드 v4** — 패턴 반복을 깨는 다양한 제목
+- 이번 제목 공식: "${titleFormula?.pattern || '~에 대해 알아야 할 것'}"
+- 예시: "${titleFormula?.example || `${keyword} 완전 정리 — 2026년 최신 기준`}"
+- ⚠️ **제목에 지역명을 넣지 마세요** (지역명은 본문에만 자연스럽게 삽입)
+- ⚠️ **"~무서울까?" "~아플까?" "~괜찮을까?" 패턴만 쓰지 마세요** — 위 공식을 따르세요
+- 키워드 의미와 어울리는, 환자가 실제 검색창에 칠 법한 자연스러운 문장이어야 합니다
+- 숫자 또는 연도(2026)를 포함하면 CTR이 높아집니다
 
-🎯 **제목 작성 가이드** — 키워드 "${keyword}"에 대해 환자가 실제로 가질 법한 궁금증을 제목에 담으세요.
-- 추천 패턴: "${titleEmotion?.pattern || '괜찮을까?'}"
-- 예시: "${titleEmotion?.example || `${keyword}, 괜찮을까?`}"
-- 제목에 "${titleEmotion?.pattern || '괜찮을까?'}" 또는 비슷한 환자 시점의 질문형 표현을 포함하세요
-- ⚠️ 키워드 의미와 어울리지 않는 감정 표현은 절대 쓰지 마세요 (예: "종류"에 "아플까?"는 부자연스러움)
-- 제목은 환자가 실제 검색창에 칠 법한 자연스러운 문장이어야 합니다
-${region ? `지역: ${region}
-- 본문 중 1~2곳에 "${region} 지역", "${region}에서" 등 자연스럽게 지역명 언급
-- 제목이나 메타 디스크립션에도 "${region}" 포함 권장
-- slug에 지역 영문명 포함 (예: daejeon, cheongju, sejong 등)
-- 지역 주민이 읽는다고 생각하고, 해당 지역 환자가 공감할 수 있는 표현 사용` : ''}
+${region ? `## 지역 정보 (본문에만 자연 삽입 — 제목 금지)
+지역: ${region}
+- ⚠️ **제목, 메타 디스크립션에 지역명 넣지 마세요** — 본문에서만 자연스럽게
+- 본문 중 2~3곳에 자연스럽게 지역 맥락 녹이기:
+  * "${region} 지역에서 이 치료를 고려하신다면..."
+  * "${region}에서도 최근 이 시술을 받는 분이 늘고 있습니다"
+  * "가까운 ${region} 치과에서..."
+- 지역 인구 특성이나 생활 패턴을 자연스럽게 반영 (억지 언급 금지)
+- slug에는 지역 영문명 포함 (예: daejeon, cheongju 등)` : ''}
 연도: 2026년
 ${internalLinksBlock}
 핵심 방향:
