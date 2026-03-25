@@ -970,6 +970,20 @@ ${region ? `## 지역 정보 (본문에만 자연 삽입 — 제목 금지)
 - slug에는 지역 영문명 포함 (예: daejeon, cheongju 등)` : ''}
 연도: 2026년
 ${internalLinksBlock}
+## 🔍 경쟁 글 차별화 전략 (핵심 — 이 지시를 반드시 따르세요)
+이 키워드("${keyword}")로 검색했을 때 나오는 상위 글들은 대부분 비슷한 내용입니다.
+**당신의 글은 그 글들과 명확히 달라야 합니다.**
+
+차별화 방법:
+1. 다른 글들이 빠뜨리는 "환자가 진짜 궁금하지만 물어보기 민망한 질문"을 다루세요
+   (예: "수술 중에 의식이 있는 건가요?", "냄새가 나나요?", "다음 날 출근할 수 있나요?")
+2. 전문의만 아는 판단 기준을 1개 이상 포함하세요
+   (예: "CT에서 잔존 골높이가 8mm 이상이면 대부분 가능합니다")
+3. 시간 경과에 따른 경험적 정보를 넣으세요
+   (예: "6개월 후 정기검진에서 가장 많이 발견되는 문제는...")
+4. 이 차별화 포인트를 독립 H2 또는 H3 섹션으로 작성하세요
+5. JSON 출력에 "differentiation_angle" 필드로 차별화 포인트를 한 문장으로 명시하세요
+
 핵심 방향:
 - 환자의 불안과 걱정을 먼저 인정하고, 구체적 정보로 해소하세요
 - 비용이나 가격 정보보다 실제 치료 과정, 통증, 회복에 집중하세요
@@ -977,6 +991,19 @@ ${internalLinksBlock}
 - "치과에서 이렇게 질문해보세요" 같은 임파워먼트 문장을 포함하세요
 
 ⛔ 절대 금지: "만원", "만 원", "가격", "비용", "보험 적용", "보험", "실비", "실손", "급여", "비급여", "건강보험", "할부", "할인", "무료 상담", "무료 검진", "수가", "본인부담", "의료비", "치료비" — 이 단어들을 title, content_html, meta_description, FAQ 어디에도 절대 쓰지 마세요. 비용 관련 FAQ 질문도 포함 금지.
+
+## 📤 JSON 출력 필드 (필수)
+{
+  "title": "...",
+  "slug": "...",
+  "meta_description": "...",
+  "content_html": "... (범위 명시 박스 + 차별화 섹션 필수 포함)",
+  "tags": [...],
+  "faq": [{"q":"...","a":"..."}],
+  "word_count": 숫자,
+  "scope_notice": "이 글의 대상·조건 + 다루지 않는 것 한 문장",
+  "differentiation_angle": "다른 글과 다른 핵심 차별점 한 문장"
+}
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
@@ -1125,14 +1152,45 @@ ${internalLinksBlock}
         }
       }
 
+      // === v5.2: 범위 명시 박스 사후 검증 — Claude가 빠뜨렸을 때 자동 삽입 ===
+      let finalHtml = contentHtml
+      const hasScopeNotice = /이 글의 범위|이 글에서 다루지 않|다루는 것|다루지 않는 것/.test(plainText)
+      if (!hasScopeNotice) {
+        console.warn(`[v5.2 범위검증] 범위 명시 박스 누락 → 자동 삽입`)
+        // parsed.scope_notice가 있으면 활용, 없으면 기본 생성
+        const scopeText = parsed.scope_notice || `일반적인 ${keyword} 기준`
+        const scopeBox = `<div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:8px;padding:16px;margin:16px 0;font-size:14px"><strong>📌 이 글의 범위</strong><br>이 글은 <strong>${scopeText}</strong>으로 작성되었습니다.<br>• 개인별 구강 상태, 전신 건강에 따라 내용이 달라질 수 있습니다.<br>• 특수한 경우(전신질환, 복합 시술 등)는 별도 글을 참고해주세요.</div>`
+        // 첫 번째 H2 바로 앞에 삽입
+        const firstH2Idx = finalHtml.indexOf('<h2')
+        if (firstH2Idx !== -1) {
+          finalHtml = finalHtml.slice(0, firstH2Idx) + scopeBox + '\n' + finalHtml.slice(firstH2Idx)
+        } else {
+          // H2가 없으면 첫 <p> 뒤에 삽입
+          const firstPEnd = finalHtml.indexOf('</p>')
+          if (firstPEnd !== -1) {
+            finalHtml = finalHtml.slice(0, firstPEnd + 4) + '\n' + scopeBox + finalHtml.slice(firstPEnd + 4)
+          } else {
+            finalHtml = scopeBox + '\n' + finalHtml
+          }
+        }
+      }
+
+      // === v5.2: 차별화 앵글 존재 검증 ===
+      const hasDiffAngle = parsed.differentiation_angle && parsed.differentiation_angle.length > 5
+      if (!hasDiffAngle) {
+        console.warn(`[v5.2 차별화검증] differentiation_angle 필드 없음 또는 부족`)
+      }
+
       return {
         title: finalTitle,
         slug: parsed.slug || keyword.replace(/\s+/g, '-'),
         meta_description: finalMeta,
-        content_html: contentHtml,
+        content_html: finalHtml,
         tags: parsed.tags || [],
         faq: parsed.faq || [],
-        word_count: plainText.length
+        word_count: plainText.length,
+        scope_notice: parsed.scope_notice || '',
+        differentiation_angle: parsed.differentiation_angle || ''
       }
     } catch (e: any) {
       lastError = `${model.label} 오류: ${e.message}`
