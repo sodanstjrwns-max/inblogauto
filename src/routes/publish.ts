@@ -315,7 +315,8 @@ async function createInblogPost(
               image: imageUrl
             }
           }
-        })
+        }),
+        signal: AbortSignal.timeout(15000) // 이미지 PATCH는 15초
       })
       
       if (patchResp.ok) {

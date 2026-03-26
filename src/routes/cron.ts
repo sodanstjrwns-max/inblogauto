@@ -1578,7 +1578,9 @@ cronApp.post('/publish-next', async (c) => {
     // 검색엔진 색인 요청 (★ v6.0: 비동기, 실패 무시)
     try {
       await requestSearchEngineIndexing(inblogUrl, c.env.DB)
-    } catch (e) {}
+    } catch (e: any) {
+      console.warn('[publish-next] 검색엔진 색인 요청 실패 (무시):', e.message || e)
+    }
 
     const draftsRemaining = draftCount - 1
     const elapsed = Date.now() - startTime
@@ -1852,7 +1854,9 @@ async function generateBodyImage(
   try {
     const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
     falApiKey = row?.value as string || ''
-  } catch (e) {}
+  } catch (e: any) {
+    console.warn('[본문이미지] fal API 키 조회 실패:', e.message || e)
+  }
 
   if (falApiKey) {
     // FLUX.2 pro → schnell 폴백 (본문 이미지는 2단계만)
@@ -2005,7 +2009,9 @@ async function generateAIImage(
   try {
     const falKeyRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
     falApiKey = falKeyRow?.value as string || ''
-  } catch (e) {}
+  } catch (e: any) {
+    console.warn('[썸네일] fal API 키 조회 실패:', e.message || e)
+  }
   
   if (falApiKey) {
     // fal.ai 모델 우선순위 체인 (최고급 → 고급 → 기본)

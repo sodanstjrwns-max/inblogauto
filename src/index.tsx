@@ -1639,7 +1639,7 @@ function getIndexHtml(): string {
         if(res.results.inblog) msg += ', Inblog: ' + (res.results.inblog?.updated || 0) + '\uac74';
         showToast(msg);
         renderSeoTools();
-      } catch(e) {}
+      } catch(e) { showToast('통합 개선 실패: ' + (e.message || e), 'error'); }
     }
 
     async function checkCannibalization() {
@@ -1679,7 +1679,7 @@ function getIndexHtml(): string {
       try {
         await api('/enhancements/test-notification', { method: 'POST' });
         showToast('\ud14c\uc2a4\ud2b8 \uc54c\ub9bc\uc774 \uc804\uc1a1\ub418\uc5c8\uc2b5\ub2c8\ub2e4!');
-      } catch(e) {}
+      } catch(e) { showToast('\uc54c\ub9bc \uc804\uc1a1 \uc2e4\ud328: ' + (e.message || e), 'error'); }
     }
 
     async function setupTelegram() {
@@ -2060,7 +2060,7 @@ function getIndexHtml(): string {
         showToast('콘텐츠가 생성되었습니다! (SEO: ' + (res.results?.[0]?.seo_score || '?') + '점)');
         if(currentPage === 'dashboard') renderDashboard();
         else if(currentPage === 'history') renderHistory();
-      } catch(e) {}
+      } catch(e) { showToast('콘텐츠 생성 실패: ' + (e.message || e), 'error'); }
     }
 
     async function publishContent(id) {
@@ -2069,7 +2069,7 @@ function getIndexHtml(): string {
         await api('/publish/' + id, { method: 'POST' });
         showToast('발행되었습니다!');
         if(currentPage === 'history') renderHistory();
-      } catch(e) {}
+      } catch(e) { showToast('발행 실패: ' + (e.message || e), 'error'); }
     }
 
     async function retryPublish(logId) {
@@ -2078,7 +2078,7 @@ function getIndexHtml(): string {
         await api('/publish/retry/' + logId, { method: 'POST' });
         showToast('재시도 완료');
         if(currentPage === 'dashboard') renderDashboard();
-      } catch(e) {}
+      } catch(e) { showToast('재시도 실패: ' + (e.message || e), 'error'); }
     }
 
     function closeModal() {
