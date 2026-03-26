@@ -1,4 +1,4 @@
-// Cron Worker v6.2: 디버깅+최적화
+// Cron Worker v7.0: 콘텐츠 고도화 (인터렉티브 요소, SEO 스코어링 강화, 이미지 프롬프트 최적화)
 // KST 02:00, 03:30, 05:00 → 하루 3건 발행
 // 전략: publish-next로 기존 draft 발행 → draft 부족 시 generate-drafts로 보충
 
@@ -112,7 +112,7 @@ export default {
         const dashData = dashRes?.ok ? await dashRes.json() : {}
         const draftData = draftRes?.ok ? await draftRes.json() : {}
         return new Response(JSON.stringify({
-          version: 'v6.2',
+          version: 'v7.0',
           today_published: dashData.today_published || 0,
           daily_target: DAILY_TARGET,
           remaining: Math.max(0, DAILY_TARGET - (dashData.today_published || 0)),
@@ -160,7 +160,7 @@ export default {
 
     return new Response(JSON.stringify({
       name: 'InBlog AutoPublish Cron Worker',
-      version: 'v6.2',
+      version: 'v7.0',
       schedule: 'KST 02:00, 03:30, 05:00 (±10min random)',
       daily_target: DAILY_TARGET,
       architecture: 'publish-next + generate-drafts',
