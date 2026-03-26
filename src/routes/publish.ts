@@ -403,6 +403,389 @@ publishRoutes.post('/verify', async (c) => {
   }
 })
 
+// ====================================================================
+// POST /api/publish/fix-realnames — 실명 일괄 익명화 (InBlog 포스트 직접 수정)
+// ====================================================================
+
+// 실명 치환 함수 — 정확도 우선 (오탐 최소화)
+// 전략: 명시적 실명만 치환, 애매한 패턴은 건드리지 않음
+function anonymizeContent(html: string): { result: string; replacements: string[] } {
+  const replacements: string[] = []
+  
+  // ★ 패턴 1: 명시적 실명 목록 (직접 치환 — 가장 정확)
+  // 원장님(문석준) 이름은 저자이므로 치환 대상이 아님!
+  // 여기에는 환자 가상 실명만 추가
+  const explicitNames: [string | RegExp, string][] = [
+    // 예: [/김미영/g, '김모 씨'], [/박서현/g, '박모 씨'],
+  ]
+  
+  for (const [pattern, replacement] of explicitNames) {
+    const regex = typeof pattern === 'string' ? new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g') : pattern
+    html = html.replace(regex, (match) => {
+      replacements.push(`${match} → ${replacement}`)
+      return replacement
+    })
+  }
+  
+  // ★ 패턴 2: "X모 씨" 패턴은 이미 익명화된 것이므로 건드리지 않음
+  // ★ 패턴 3: "성+이름+호칭" (씨/님) — 실명+호칭 조합만 매칭
+  //   주의: 일반 단어 오탐 방지를 위해 "성(1자)+이름(2자)+호칭" 만 매칭
+  //   예: "김미영 씨", "박서현님" → "김모 씨", "박모님"
+  //   단, 지명이나 일반 단어는 제외
+  const surnames = '김이박최정강조윤장임한오서신권황안송전홍유문배류남심곽배허노하주우차방공민진어마라'
+  const surnameClass = `[${surnames}]`
+  
+  // 성(1자) + 이름(정확히 2자) + 공백? + 호칭 — 3글자 이름 + 호칭만 매칭
+  const nameHonorificPattern = new RegExp(
+    `(${surnameClass})([가-힣]{2})(\\s*)(씨|님)(?![가-힣])`, 'g'
+  )
+  
+  // 지명, 의학용어 등 오탐 방지 skipList (성+이름 부분)
+  const skipFullNames = new Set([
+    // 지명 (성씨+2글자)
+    '서산', '홍성', '논산', '강릉', '김포', '김해', '안양', '안산', '안성',
+    '정읍', '조치', '황간', '임실', '전주', '유성', '문경', '배방', '남원',
+    '심곡', '곽산', '허남', '노원', '하남', '주안', '우정', '차탄', '방배',
+    '공주', '민락', '진천', '진안', '어양', '마산', '마포',
+    // 일반 단어 (성씨+2글자)  
+    '안면', '안내', '안정', '안전', '안심', '안과',
+    '전문', '전체', '전혀', '전후', '전달', '전날',
+    '정상', '정확', '정도', '정보', '정기',
+    '주의', '주변', '주치', '주기', '주요', '주모',
+    '이식', '이상', '이후', '이전', '이물', '이보',
+    '신경', '신거', '신장', '신체', '신질',
+    '임상', '임시', '임플', '임라',
+    '한번', '한편', '한쪽', '한국', '한약', '한치', '한마', '한밤',
+    '최고', '최선', '최대', '최소', '최근', '최초', '최신', '최적',
+    '강력', '강한', '강도', '강해', '강요',
+    '황금', '황에',
+    '조금', '조건', '조직', '조기',
+    '유지', '유의', '유형', '유발', '유치',
+    '문의', '문제', '문하',
+    '배치', '배열',
+    '남은', '남자', '남녀', '남부', '남성',
+    '허용', '허리',
+    '심한', '심각', '심리', '심미', '심화', '심해',
+    '노출', '노력', '노화', '노인',
+    '하지', '하루', '하나', '하여', '하시',
+    '공간', '공급', '공포', '공유',
+    '민감',
+    '진행', '진단', '진료', '진통', '진정',
+    '어금', '어디', '어르',
+    '마취', '마감', '마찬', '마무',
+    '방법', '방치', '방해', '방지',
+    '차이', '차단', '차지',
+    '권장', '권고',
+    '장단', '장기', '장생', '장에',
+    '오히', '오스', '오래',
+    '송곳', '송진',
+  ])
+  
+  html = html.replace(nameHonorificPattern, (match, surname, name, space, honorific) => {
+    const fullName = surname + name
+    if (skipFullNames.has(fullName)) return match
+    // 이미 "X모" 형태면 건드리지 않음
+    if (name === '모' || name.startsWith('모')) return match
+    
+    const replacement = `${surname}모${space}${honorific}`
+    replacements.push(`${match} → ${replacement}`)
+    return replacement
+  })
+  
+  return { result: html, replacements }
+}
+
+publishRoutes.post('/fix-realnames', async (c) => {
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = apiKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
+  
+  if (!inblogApiKey) return c.json({ error: 'No InBlog API key configured' }, 400)
+  
+  // body에서 post_ids를 받거나, DB에서 전체 published 포스트 조회
+  let postIds: number[] = []
+  try {
+    const body = await c.req.json() as any
+    if (body?.post_ids && Array.isArray(body.post_ids)) {
+      postIds = body.post_ids
+    }
+  } catch {}
+  
+  if (postIds.length === 0) {
+    // DB에서 InBlog에 발행된 모든 포스트 조회
+    const rows = await c.env.DB.prepare(`
+      SELECT DISTINCT pl.inblog_post_id 
+      FROM publish_logs pl 
+      WHERE pl.inblog_post_id IS NOT NULL
+      ORDER BY pl.inblog_post_id ASC
+    `).all()
+    postIds = (rows.results || []).map((r: any) => Number(r.inblog_post_id))
+  }
+  
+  if (postIds.length === 0) {
+    return c.json({ message: 'No published posts found', fixed: 0 })
+  }
+  
+  const results: any[] = []
+  let fixedCount = 0
+  let errorCount = 0
+  let skippedCount = 0
+  
+  for (const postId of postIds) {
+    try {
+      // 1. GET 포스트
+      const getResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        headers: {
+          'Authorization': `Bearer ${inblogApiKey}`,
+          'Accept': 'application/vnd.api+json'
+        }
+      })
+      
+      if (!getResp.ok) {
+        if (getResp.status === 404) {
+          results.push({ post_id: postId, status: 'deleted', detail: '404 Not Found' })
+          skippedCount++
+          continue
+        }
+        results.push({ post_id: postId, status: 'error', detail: `GET ${getResp.status}` })
+        errorCount++
+        continue
+      }
+      
+      const data: any = await getResp.json()
+      const attrs = data?.data?.attributes || {}
+      const contentHtml = attrs.content_html || ''
+      const title = attrs.title || ''
+      const description = attrs.description || ''
+      
+      // 2. 실명 탐지 + 치환
+      const contentResult = anonymizeContent(contentHtml)
+      const titleResult = anonymizeContent(title)
+      const descResult = anonymizeContent(description)
+      
+      const totalReplacements = [
+        ...contentResult.replacements, 
+        ...titleResult.replacements,
+        ...descResult.replacements
+      ]
+      
+      if (totalReplacements.length === 0) {
+        results.push({ post_id: postId, status: 'clean', title: title.slice(0, 60) })
+        skippedCount++
+        continue
+      }
+      
+      // 3. PATCH로 업데이트
+      const patchBody: any = {}
+      if (contentResult.replacements.length > 0) patchBody.content_html = contentResult.result
+      if (titleResult.replacements.length > 0) patchBody.title = titleResult.result
+      if (descResult.replacements.length > 0) patchBody.description = descResult.result
+      
+      const patchResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          'Authorization': `Bearer ${inblogApiKey}`,
+          'Accept': 'application/vnd.api+json'
+        },
+        body: JSON.stringify({
+          jsonapi: { version: '1.0' },
+          data: {
+            type: 'posts',
+            id: String(postId),
+            attributes: patchBody
+          }
+        })
+      })
+      
+      if (patchResp.ok) {
+        fixedCount++
+        results.push({ 
+          post_id: postId, 
+          status: 'fixed', 
+          replacements_count: totalReplacements.length,
+          replacements: totalReplacements.slice(0, 10),
+          title: (titleResult.replacements.length > 0 ? titleResult.result : title).slice(0, 60)
+        })
+        console.log(`[실명수정] ✅ Post ${postId}: ${totalReplacements.length}건 치환`)
+      } else {
+        const errText = await patchResp.text()
+        errorCount++
+        results.push({ 
+          post_id: postId, 
+          status: 'patch_error', 
+          http_status: patchResp.status,
+          detail: errText.slice(0, 200)
+        })
+        console.log(`[실명수정] ❌ Post ${postId}: PATCH ${patchResp.status}`)
+      }
+      
+      // DB의 content_html도 동기화
+      if (contentResult.replacements.length > 0) {
+        try {
+          await c.env.DB.prepare(`
+            UPDATE contents SET content_html = ? WHERE id IN (
+              SELECT c.id FROM contents c 
+              JOIN publish_logs pl ON pl.content_id = c.id 
+              WHERE pl.inblog_post_id = ?
+            )
+          `).bind(contentResult.result, postId).run()
+        } catch {}
+      }
+      
+    } catch (e: any) {
+      errorCount++
+      results.push({ post_id: postId, status: 'exception', detail: e.message?.slice(0, 200) })
+    }
+  }
+  
+  return c.json({
+    message: `${fixedCount}/${postIds.length}건 수정 완료 (건너뜀: ${skippedCount}, 에러: ${errorCount})`,
+    total: postIds.length,
+    fixed: fixedCount,
+    skipped: skippedCount,
+    errors: errorCount,
+    results
+  })
+})
+
+// POST /api/publish/scan-realnames — 실명 스캔만 (수정 없이 확인용)
+publishRoutes.post('/scan-realnames', async (c) => {
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = apiKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
+  
+  if (!inblogApiKey) return c.json({ error: 'No InBlog API key configured' }, 400)
+  
+  let postIds: number[] = []
+  try {
+    const body = await c.req.json() as any
+    if (body?.post_ids && Array.isArray(body.post_ids)) {
+      postIds = body.post_ids
+    }
+  } catch {}
+  
+  if (postIds.length === 0) {
+    const rows = await c.env.DB.prepare(`
+      SELECT DISTINCT pl.inblog_post_id 
+      FROM publish_logs pl 
+      WHERE pl.inblog_post_id IS NOT NULL
+      ORDER BY pl.inblog_post_id ASC
+    `).all()
+    postIds = (rows.results || []).map((r: any) => Number(r.inblog_post_id))
+  }
+  
+  const results: any[] = []
+  let affectedCount = 0
+  
+  for (const postId of postIds) {
+    try {
+      const getResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        headers: {
+          'Authorization': `Bearer ${inblogApiKey}`,
+          'Accept': 'application/vnd.api+json'
+        }
+      })
+      
+      if (!getResp.ok) {
+        results.push({ post_id: postId, status: getResp.status === 404 ? 'deleted' : 'error' })
+        continue
+      }
+      
+      const data: any = await getResp.json()
+      const attrs = data?.data?.attributes || {}
+      const contentResult = anonymizeContent(attrs.content_html || '')
+      const titleResult = anonymizeContent(attrs.title || '')
+      const descResult = anonymizeContent(attrs.description || '')
+      
+      const all = [...contentResult.replacements, ...titleResult.replacements, ...descResult.replacements]
+      
+      if (all.length > 0) {
+        affectedCount++
+        results.push({
+          post_id: postId,
+          title: (attrs.title || '').slice(0, 60),
+          realname_count: all.length,
+          samples: all.slice(0, 5)
+        })
+      }
+    } catch {}
+  }
+  
+  return c.json({
+    message: `${affectedCount}/${postIds.length}건에 실명 발견`,
+    affected: affectedCount,
+    total_scanned: postIds.length,
+    details: results
+  })
+})
+
+// POST /api/publish/restore-author — "문 원장" → "문석준" 원복 (임시)
+publishRoutes.post('/restore-author', async (c) => {
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+  const inblogApiKey = apiKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
+  if (!inblogApiKey) return c.json({ error: 'No API key' }, 400)
+
+  let postIds: number[] = []
+  try {
+    const body = await c.req.json() as any
+    if (body?.post_ids) postIds = body.post_ids
+  } catch {}
+
+  if (postIds.length === 0) {
+    const rows = await c.env.DB.prepare(`
+      SELECT DISTINCT pl.inblog_post_id FROM publish_logs pl 
+      WHERE pl.inblog_post_id IS NOT NULL ORDER BY pl.inblog_post_id ASC
+    `).all()
+    postIds = (rows.results || []).map((r: any) => Number(r.inblog_post_id))
+  }
+
+  const results: any[] = []
+  let fixedCount = 0
+
+  for (const postId of postIds) {
+    try {
+      const getResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        headers: { 'Authorization': `Bearer ${inblogApiKey}`, 'Accept': 'application/vnd.api+json' }
+      })
+      if (!getResp.ok) { results.push({ post_id: postId, status: getResp.status === 404 ? 'deleted' : 'error' }); continue }
+      
+      const data: any = await getResp.json()
+      const attrs = data?.data?.attributes || {}
+      const contentHtml = (attrs.content_html || '') as string
+      
+      if (!contentHtml.includes('문 원장')) {
+        results.push({ post_id: postId, status: 'no_change' })
+        continue
+      }
+      
+      const newHtml = contentHtml.replace(/문 원장/g, '문석준')
+      
+      const patchResp = await fetch(`${INBLOG_BASE}/posts/${postId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          'Authorization': `Bearer ${inblogApiKey}`,
+          'Accept': 'application/vnd.api+json'
+        },
+        body: JSON.stringify({
+          jsonapi: { version: '1.0' },
+          data: { type: 'posts', id: String(postId), attributes: { content_html: newHtml } }
+        })
+      })
+      
+      if (patchResp.ok) {
+        fixedCount++
+        results.push({ post_id: postId, status: 'restored' })
+      } else {
+        results.push({ post_id: postId, status: 'patch_error', detail: (await patchResp.text()).slice(0, 100) })
+      }
+    } catch (e: any) {
+      results.push({ post_id: postId, status: 'exception', detail: e.message?.slice(0, 100) })
+    }
+  }
+
+  return c.json({ message: `${fixedCount}/${postIds.length}건 원복 완료`, fixed: fixedCount, results })
+})
+
 // POST /api/publish/:contentId — 콘텐츠를 인블로그에 발행
 publishRoutes.post('/:contentId', async (c) => {
   const contentId = c.req.param('contentId')
