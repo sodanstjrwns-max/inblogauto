@@ -635,6 +635,56 @@ cronApp.post('/generate', async (c) => {
         bestContent.quality_issues = qualityIssues
       }
 
+      // === 0.2단계: 인터렉티브 요소 자동 보강 + 가독성 향상 (v7.0) ===
+      {
+        let html = bestContent.content_html || ''
+        const plain = html.replace(/<[^>]*>/g, '')
+
+        // 1) "이렇게 질문하세요" 박스 자동 삽입 — 없으면 2번째 H2 뒤에 삽입
+        if (!/질문해보세요|질문해\s*보세요|이렇게 질문/.test(plain)) {
+          const questionBoxHtml = `<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:16px;margin:16px 0"><strong>💡 치과에서 이렇게 질문해보세요</strong><br>• "제 경우에는 ${kw.keyword}이(가) 어떤가요?"<br>• "다른 옵션은 없나요? 장단점을 비교해주세요."<br>• "회복 기간은 현실적으로 얼마나 걸릴까요?"</div>`
+          const h2Positions: number[] = []
+          let sIdx = 0
+          while (true) {
+            const pos = html.indexOf('</h2>', sIdx)
+            if (pos === -1) break
+            h2Positions.push(pos + 5)
+            sIdx = pos + 1
+          }
+          // 2번째 H2 뒤에 삽입 (없으면 1번째)
+          const insertPos = h2Positions[Math.min(1, h2Positions.length - 1)]
+          if (insertPos) {
+            html = html.slice(0, insertPos) + '\n' + questionBoxHtml + html.slice(insertPos)
+          }
+        }
+
+        // 2) 핵심 요약 하이라이트 박스 — 마지막 H2 바로 앞에 삽입
+        if (!/핵심 요약|💎|한눈에 보기/.test(plain) && plain.length > 2000) {
+          // 핵심 키워드 3개를 본문에서 추출
+          const keyPhrases = [kw.keyword, classified.label, '전문의 상담'].filter(Boolean)
+          const summaryBoxHtml = `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:20px 0"><strong>💎 핵심 요약</strong><br>• ${kw.keyword}: 개인의 구강 상태에 따라 방법과 기간이 달라집니다<br>• 정확한 판단은 CT 촬영 등 정밀 진단 후 가능합니다<br>• 궁금한 점은 미리 메모해서 상담 시 질문하세요</div>`
+          // FAQ H2 바로 앞에 삽입
+          const faqH2Idx = html.lastIndexOf('<h2')
+          if (faqH2Idx > 0) {
+            html = html.slice(0, faqH2Idx) + summaryBoxHtml + '\n' + html.slice(faqH2Idx)
+          }
+        }
+
+        // 3) 긴 단락(400자+) 자동 분할 — <p> 태그 내 400자 이상이면 중간에 <br><br> 삽입
+        html = html.replace(/<p([^>]*)>([\s\S]{400,}?)<\/p>/gi, (match, attrs, content) => {
+          // 문장 단위로 분할 (마침표+공백 기준)
+          const sentences = content.split(/(\. )/)
+          if (sentences.length <= 2) return match
+          const mid = Math.floor(sentences.length / 2)
+          const firstHalf = sentences.slice(0, mid).join('')
+          const secondHalf = sentences.slice(mid).join('')
+          return `<p${attrs}>${firstHalf.trim()}</p>\n<p${attrs}>${secondHalf.trim()}</p>`
+        })
+
+        bestContent.content_html = html
+        console.log(`[v7.0 인터렉티브] 자동 보강 완료 (${kw.keyword})`)
+      }
+
       // === 0.3단계: 실명(본명) 후처리 필터 — enhancements.ts 공유 모듈 사용 (v6.2) ===
       // ※ 저자(문석준 원장) 이름은 치환하지 않음!
       // ※ 호칭(씨/님)만 매칭 — "환자"는 오탐이 심해 제외
@@ -1457,20 +1507,43 @@ cronApp.post('/publish-next', async (c) => {
       await c.env.DB.prepare("UPDATE contents SET content_html = ? WHERE id = ?").bind(publishHtml, draft.id).run()
     }
 
-    // 인블로그에 포스트 생성
-    const createResult = await createInblogPost(inblogApiKey, {
-      title: draft.title,
-      slug: draft.slug,
-      description: draft.meta_description,
-      content_html: publishHtml,
-      meta_description: draft.meta_description,
-      image: draft.thumbnail_url
-    }, tagIds, authorId)
+    // ★ v7.0: 인블로그 포스트 생성 (409 slug 충돌 자동 재시도 포함)
+    let createResult: any
+    let retrySlug = draft.slug
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        createResult = await createInblogPost(inblogApiKey, {
+          title: draft.title,
+          slug: retrySlug,
+          description: draft.meta_description,
+          content_html: publishHtml,
+          meta_description: draft.meta_description,
+          image: draft.thumbnail_url
+        }, tagIds, authorId)
+        break // 성공 시 루프 탈출
+      } catch (createErr: any) {
+        if (createErr.message?.includes('409') && attempt < 2) {
+          // slug 충돌 → 고유 접미사 추가 후 재시도
+          retrySlug = `${draft.slug}-${Date.now().toString(36).slice(-4)}`
+          await c.env.DB.prepare("UPDATE contents SET slug = ? WHERE id = ?").bind(retrySlug, draft.id).run()
+          console.warn(`[publish-next] slug 충돌 재시도 ${attempt + 1}: ${retrySlug}`)
+          continue
+        }
+        throw createErr // 다른 에러거나 3회 실패 시 전파
+      }
+    }
+    if (!createResult) throw new Error('createInblogPost 3회 실패')
 
     const inblogPostId = createResult.id
 
-    // 즉시 발행
-    await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+    // 즉시 발행 (★ v7.0: 발행 실패 시 30초 후 1회 재시도)
+    try {
+      await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+    } catch (pubErr: any) {
+      console.warn(`[publish-next] 발행 첫 시도 실패, 3초 후 재시도: ${pubErr.message}`)
+      await new Promise(r => setTimeout(r, 3000))
+      await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+    }
 
     const inblogUrl = `https://${apiInfo.subdomain}.inblog.ai/${draft.slug}`
 
@@ -1703,7 +1776,7 @@ async function generateBodyImage(
 
 // ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
 
-// 콘텐츠 유형별 이미지 프롬프트 템플릿
+// 콘텐츠 유형별 이미지 프롬프트 템플릿 (v7.0 — 키워드 반영 강화)
 function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string): string {
   const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
   const baseStyle = `High quality photorealistic 3D medical illustration, clean modern design, soft pastel colors with light blue and white palette, ${noText}, no human faces, no logos, professional dental healthcare aesthetic, studio lighting, cinematic composition, 8k quality, ultra-detailed`
@@ -1726,13 +1799,26 @@ function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail
     E: 'calming reassuring atmosphere, warm soft lighting, peaceful comforting scene',
   }
   
-  const visual = categoryVisuals[category] || categoryVisuals.general
+  // v7.0: 키워드 기반 시각 요소 자동 추가
+  let kwVisual = ''
+  const kw = keyword.toLowerCase()
+  if (/임플란트/.test(kw)) kwVisual = 'titanium dental implant screw, cross-section of jawbone, osseointegration concept'
+  else if (/사랑니|발치/.test(kw)) kwVisual = 'wisdom tooth extraction concept, dental forceps, gentle removal procedure'
+  else if (/교정|투명|돌출/.test(kw)) kwVisual = 'clear aligners on teeth model, before-after alignment concept'
+  else if (/신경치료|충치/.test(kw)) kwVisual = 'tooth cross-section showing root canal, dental pulp treatment concept'
+  else if (/잇몸|치주/.test(kw)) kwVisual = 'healthy gum tissue around teeth, periodontal care concept'
+  else if (/미백|라미네이트/.test(kw)) kwVisual = 'bright white teeth, cosmetic dentistry concept, radiant smile'
+  else if (/크라운|보철/.test(kw)) kwVisual = 'dental crown placement, prosthetic tooth restoration'
+  else if (/스케일링|예방/.test(kw)) kwVisual = 'professional dental cleaning tools, ultrasonic scaler, preventive care'
+  else if (/통증|아프/.test(kw)) kwVisual = 'soothing dental care concept, pain relief, calming atmosphere'
+  
+  const visual = kwVisual || categoryVisuals[category] || categoryVisuals.general
   const mood = typeMood[contentType] || typeMood.B
   
   if (purpose === 'thumbnail') {
-    return `${baseStyle}, ${visual}, centered composition, simple clean background, blog hero image, ${mood}`
+    return `${baseStyle}, ${visual}, centered composition, simple clean background, blog hero image, ${mood}, related to "${keyword}"`
   } else {
-    return `${baseStyle}, ${visual}, ${mood}, detailed realistic medical illustration, soft shadows, clean white background`
+    return `${baseStyle}, ${visual}, ${mood}, detailed realistic medical illustration, soft shadows, clean white background, related to "${keyword}"`
   }
 }
 

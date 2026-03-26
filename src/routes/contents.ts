@@ -138,7 +138,7 @@ function getArticleStructure(contentId?: number): typeof ARTICLE_STRUCTURES[0] {
   return ARTICLE_STRUCTURES[idx]
 }
 
-// ===== Experience 마커 풀 (임상 경험 기반 문장 — E-E-A-T 강화) =====
+// ===== Experience 마커 풀 (임상 경험 기반 문장 — E-E-A-T 강화 v7.0) =====
 const EXPERIENCE_MARKERS = [
   '진료실에서 환자분들이 가장 많이 하시는 질문이 바로 이겁니다.',
   '수천 케이스를 진행하면서 느낀 것은, 대부분의 걱정이 "모름"에서 온다는 점입니다.',
@@ -152,6 +152,12 @@ const EXPERIENCE_MARKERS = [
   '처음 내원하신 날과 치료가 끝난 날, 같은 분이라고 믿기 어려울 만큼 표정이 달라지시는 경우를 많이 봅니다.',
   '이런 질문을 하시는 분들의 90%는 막상 치료를 받고 나서 "왜 더 일찍 안 했을까"라고 하십니다.',
   '진료실에서 실제로 환자분께 보여드리는 자료를 바탕으로 설명드리겠습니다.',
+  // v7.0 추가: 더 구체적이고 생생한 임상 경험
+  '진료 중에 이 상태를 발견하면, 환자분보다 제가 더 안타까운 경우가 많습니다. 조금만 일찍 오셨으면 하는 마음이 들거든요.',
+  '정기검진에서 이 부분을 체크할 때, "이전과 비교해서 어떤가요?"라고 여쭤봅니다. 그 답변 하나로 현재 관리 상태를 짐작할 수 있습니다.',
+  'CT를 찍어보면, 겉으로는 멀쩡해 보이는데 속은 전혀 다른 경우가 있습니다. 그래서 정확한 진단이 중요합니다.',
+  '환자분이 가져오시는 인터넷 정보 중 70%는 맞지만, 나머지 30%가 판단을 완전히 바꿀 수 있는 부분이에요.',
+  '같은 치료라도 환자분의 뼈 상태, 전신 건강, 생활 습관에 따라 결과가 확연히 달라집니다. 그래서 맞춤 계획이 필수입니다.',
 ]
 
 function getExperienceMarkers(keyword: string, count: number = 3): string[] {
@@ -186,7 +192,7 @@ function getOpeningPattern(keyword: string, contentId: number): typeof OPENING_P
   return OPENING_PATTERNS[(hash + contentId) % OPENING_PATTERNS.length]
 }
 
-// ===== 원장 관점 문장 풀 v5.1 (문석준 원장의 진료 철학 + 판단 기준 기반) =====
+// ===== 원장 관점 문장 풀 v7.0 (문석준 원장의 진료 철학 + 판단 기준 기반) =====
 const DOCTOR_PERSPECTIVES = [
   '제가 환자분들께 늘 말씀드리는 기준이 있습니다. "지금 불편한 게 일상을 방해하는가?"입니다. 방해한다면 미루는 것 자체가 손해입니다.',
   '통합치의학과 전문의로서 강조하고 싶은 건, 단편적인 치료보다 전체 구강 상태를 보는 시각이 중요하다는 점입니다.',
@@ -200,6 +206,11 @@ const DOCTOR_PERSPECTIVES = [
   '환자분이 두 가지 선택지 사이에서 고민하실 때, 저는 "5년 뒤에 어떤 선택을 했으면 좋겠냐"고 여쭤봅니다. 대부분 그 질문 하나로 결정이 됩니다.',
   '젊은 분들이 "나이가 더 먹으면 하려고요"라고 하시는데, 사실은 정반대입니다. 뼈 상태도 전신 건강도 지금이 가장 좋은 시기거든요.',
   '이 치료를 할지 말지 고민하시는 분께는 항상 이렇게 말씀드립니다. "안 하시면 안 되는 건 아닙니다. 다만, 미루실수록 선택지가 줄어듭니다."',
+  // v7.0 추가: Patient Funnel 철학 기반 심화
+  '환자분이 두려워하시는 것과 실제로 일어나는 일 사이에는 큰 간극이 있습니다. 그 간극을 메우는 것이 첫 상담의 핵심이에요.',
+  '저는 치료 계획을 세울 때 항상 "최악의 경우"도 함께 말씀드립니다. 그래야 환자분이 진짜 결정을 내릴 수 있거든요.',
+  '진료실에서 20년간 보아온 패턴이 있습니다. 정보를 충분히 이해한 환자분은, 치료 후 만족도가 현저히 높습니다.',
+  '"필요한 진료를 받지 못하는 사람이 없도록 하자" — 이것이 제가 매일 진료실에 서는 이유입니다.',
 ]
 
 function getDoctorPerspective(keyword: string, contentId: number): string {
@@ -444,14 +455,47 @@ ${opening.guide}
 
 ## content_html에 JSON-LD, <script> 태그 절대 포함하지 마세요.
 
-## ⚠️ 반복 방지 최종 체크 (v6.0 추가)
+## ⚠️ 반복 방지 최종 체크 (v7.0 강화)
 글 작성 후 반드시 스스로 체크하세요:
 1. "~입니다" 어미가 3문장 연속으로 나오지 않는가?
 2. 같은 H2 섹션 내에서 같은 단어가 3회 이상 반복되지 않는가?
 3. 각 H2 섹션의 첫 문장이 모두 다른 패턴으로 시작하는가?
 4. FAQ의 답변이 모두 다른 어미로 끝나는가?
 5. 본문에 "중요합니다", "필요합니다", "좋습니다"가 총 5회 이상 나오지 않는가?
-위 체크에 걸리면 해당 부분을 수정한 후 출력하세요.`
+위 체크에 걸리면 해당 부분을 수정한 후 출력하세요.
+
+## 📌 인터렉티브 요소 삽입 (v7.0 신규 — 체류시간 극대화)
+아래 인터렉티브 요소 중 **최소 2개 이상**을 content_html에 포함하세요:
+
+### (1) 자가진단 체크리스트 (해당되는 경우)
+환자가 스스로 체크할 수 있는 리스트를 HTML <ul>로 만드세요.
+예: "아래 항목 중 3개 이상 해당되면, 전문 상담을 받아보시는 것이 좋습니다."
+☐ 양치 시 잇몸에서 피가 자주 난다
+☐ 찬 음식을 먹으면 특정 치아가 시리다
+☐ 최근 6개월 이내 치과 검진을 받지 않았다
+
+### (2) "이렇게 질문하세요" 박스
+치과 방문 시 실제로 물어볼 수 있는 질문을 박스로 만드세요.
+<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:16px;margin:16px 0">
+<strong>💡 치과에서 이렇게 질문해보세요</strong><br>
+"제 경우에 ~하는 게 좋을까요, ~하는 게 좋을까요?" ...
+</div>
+
+### (3) 비교 테이블
+선택지가 2개 이상이면 반드시 <table>로 비교표를 만드세요.
+
+### (4) 타임라인 박스
+시간 경과가 중요한 주제면 시각적 타임라인을 만드세요.
+"당일 → 3일 → 1주 → 2주 → 1개월 → 3개월" 식으로.
+
+### (5) 핵심 요약 하이라이트 박스
+중간에 "💎 핵심 요약" 박스를 1개 넣으세요:
+<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:16px 0">
+<strong>💎 핵심 요약</strong><br>
+[이 섹션의 핵심 포인트를 2~3줄로 요약]
+</div>
+
+이 인터렉티브 요소들은 Google이 "사용자 참여도가 높은 콘텐츠"로 인식하는 강력한 신호입니다.`
 }
 
 // GET /api/contents - 콘텐츠 목록 조회
@@ -1098,6 +1142,65 @@ function calculateSeoScore(content: any, keyword: string): number {
   } else {
     score -= 3
     violations.push('첫 문단 검색 의도 명시 부재 — 이탈률 위험')
+  }
+
+  // ===== 21. 인터렉티브 요소 검증 (v7.0 — 체류시간 극대화, +8점) =====
+  let interactiveScore = 0
+  // 자가진단 체크리스트
+  if (/해당|☐|체크|확인해보세요|자가진단|자가\s*테스트|몇\s*개.*해당/.test(plainText)) {
+    interactiveScore += 3
+  }
+  // "이렇게 질문하세요" 박스
+  if (/질문해보세요|질문해\s*보세요|물어보세요|확인해보세요.*치과에서/.test(plainText)) {
+    interactiveScore += 2
+  }
+  // 비교 테이블
+  if (html.includes('<table') && html.includes('<th')) {
+    interactiveScore += 2
+  }
+  // 타임라인/단계별 구조
+  if (/당일.*→|1일.*→|1주.*→|단계별|타임라인|STEP\s*\d|[①②③④⑤]/.test(plainText)) {
+    interactiveScore += 2
+  }
+  // 핵심 요약 하이라이트 박스
+  if (/핵심 요약|핵심 포인트|한눈에 보기|💎/.test(plainText) || /background.*#fef3c7/.test(html)) {
+    interactiveScore += 2
+  }
+  score += Math.min(8, interactiveScore)
+  if (interactiveScore === 0) {
+    violations.push('인터렉티브 요소 부재 — 체류시간 위험')
+  }
+
+  // ===== 22. 가독성 & 시각적 구조 검증 (v7.0 — +5점) =====
+  let readabilityScore = 0
+  // <strong> 또는 <b> 사용 빈도 (키워드 강조)
+  const boldCount = (html.match(/<(strong|b)>/gi) || []).length
+  if (boldCount >= 5 && boldCount <= 30) readabilityScore += 2
+  // <h3> 사용 (세부 구조화)
+  const h3Count = (html.match(/<h3/gi) || []).length
+  if (h3Count >= 2) readabilityScore += 2
+  // 단락 길이 — 200자 이상인 단락이 3개 미만이면 가독성 좋음
+  const paragraphs = plainText.split(/\n\n+/).filter(p => p.trim().length > 0)
+  const longParagraphs = paragraphs.filter(p => p.length > 400)
+  if (longParagraphs.length <= 2) readabilityScore += 1
+  else if (longParagraphs.length >= 5) {
+    readabilityScore -= 2
+    violations.push(`긴 단락 ${longParagraphs.length}개 — 가독성 저하 위험`)
+  }
+  score += Math.min(5, readabilityScore)
+
+  // ===== 23. 시맨틱 키워드 다양성 (v7.0 — +4점) =====
+  const semanticTerms = [
+    '원인', '증상', '치료', '회복', '주의', '관리', '진단', '검사',
+    '부작용', '장점', '단점', '기간', '과정', '방법', '효과', '예방',
+    '상담', '전문의', '추천', '경험'
+  ]
+  const semanticHits = semanticTerms.filter(t => plainText.includes(t))
+  if (semanticHits.length >= 8) score += 4
+  else if (semanticHits.length >= 5) score += 2
+  else if (semanticHits.length < 3) {
+    score -= 2
+    violations.push('시맨틱 키워드 부족 — 토픽 깊이 부족')
   }
 
   if (violations.length > 0) {
