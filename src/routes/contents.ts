@@ -1194,21 +1194,11 @@ async function generateThumbnail(keyword: string, title: string, env?: any): Pro
           continue
         }
       }
-      console.warn('[썸네일] fal.ai 전체 모델 실패, Pollinations 폴백')
+      console.warn('[썸네일] fal.ai 전체 모델 실패, 플레이스홀더 폴백')
     }
     
-    // 폴백: Pollinations AI turbo (무료)
-    const seed = Math.abs(Date.now() % 999999)
-    const encodedPrompt = encodeURIComponent(prompt.substring(0, 200))
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1200&height=630&model=turbo&nologo=true&seed=${seed}`
-    
-    const checkResponse = await fetch(pollinationsUrl, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(20000) })
-    
-    if (checkResponse.ok || checkResponse.status === 302 || checkResponse.status === 301) {
-      return { url: pollinationsUrl, prompt }
-    }
-
-    return { url: pollinationsUrl, prompt }
+    // ★ v6.2: Pollinations 서비스 중단 → 플레이스홀더 직접 반환
+    return { url: placeholderUrl, prompt }
   } catch (e) {
     console.error('썸네일 생성 실패, 플레이스홀더 사용:', e)
     return { url: placeholderUrl, prompt }

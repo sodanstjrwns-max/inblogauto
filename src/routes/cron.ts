@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { Bindings } from '../index'
 import { classifyContentType, getTypeGuide, buildSystemPrompt, calculateSeoScore } from './contents'
 import { verifyInblogApiKey, syncTags, createInblogPost, publishInblogPost, getAuthorId } from './publish'
-import { injectSchemaToHtml, insertInternalLinks, sendNotification } from './enhancements'
+import { injectSchemaToHtml, insertInternalLinks, sendNotification, anonymizeRealNames } from './enhancements'
 import { autoReplenishKeywords } from './keyword-discovery'
 
 const cronApp = new Hono<{ Bindings: Bindings }>()
@@ -451,15 +451,16 @@ cronApp.post('/generate', async (c) => {
 
   // 부족하면 추가 (중복 방지 필터 적용)
   if (keywords.length < count) {
-    const excludeIds = keywords.map((k: any) => k.id).join(',') || '0'
+    // ★ v6.2: SQL 인젝션 방지 — excludeIds를 파라미터화
+    const existingIds = new Set(keywords.map((k: any) => k.id))
     const extra = await c.env.DB.prepare(
       `SELECT * FROM keywords 
-       WHERE is_active = 1 AND id NOT IN (${excludeIds})
+       WHERE is_active = 1
        ORDER BY used_count ASC, priority DESC, RANDOM()
        LIMIT ?`
-    ).bind((count - keywords.length) * 3).all()
-    // 비용/보험 키워드 제외 + 미사용 우선
-    const extraAll = (extra.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword))
+    ).bind((count - keywords.length) * 10).all()
+    // 비용/보험 키워드 제외 + 기존 선택 제외 + 미사용 우선
+    const extraAll = (extra.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword) && !existingIds.has(k.id))
     const extraFiltered = extraAll.filter((k: any) => !usedKeywordIds.has(k.id))
     const extraFallback = extraAll.filter((k: any) => usedKeywordIds.has(k.id))
     keywords.push(...extraFiltered, ...extraFallback)
@@ -634,61 +635,15 @@ cronApp.post('/generate', async (c) => {
         bestContent.quality_issues = qualityIssues
       }
 
-      // === 0.3단계: 실명(본명) 후처리 필터 — 환자 실명만 "모 씨"로 자동 치환 ===
+      // === 0.3단계: 실명(본명) 후처리 필터 — enhancements.ts 공유 모듈 사용 (v6.2) ===
       // ※ 저자(문석준 원장) 이름은 치환하지 않음!
-      // ※ 호칭(씨/님)만 매칭 — "환자"는 오탐("고혈압 환자","오시는 환자" 등)이 심해 제외
+      // ※ 호칭(씨/님)만 매칭 — "환자"는 오탐이 심해 제외
       {
-        let html = bestContent.content_html || ''
-        const SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배조백허노남심하주우곽성차유구연'
-        // 오탐 방지: 일반 단어/의학용어/지명/동사형 skipList
-        const SKIP = new Set([
-          '안전','안정','안내','안과','안심','안면','안쪽','안되',
-          '전문','전체','전혀','전후','전달','전날','전반','전신',
-          '정상','정확','정도','정보','정기','정말','정밀','정리','정에서',
-          '주의','주변','주치','주기','주요','주로','주사',
-          '이식','이상','이후','이전','이물','이때','이런','이유',
-          '신경','신장','신체','신질','신거','신속','신뢰',
-          '임상','임시','임플','임신',
-          '한번','한편','한쪽','한국','한약','한치','한마','한밤','한동',
-          '최고','최선','최대','최소','최근','최초','최신','최적',
-          '강력','강한','강도','강해','강요','강화',
-          '조금','조건','조직','조기','조절',
-          '유지','유의','유형','유발','유치','유리','유사',
-          '문의','문제','문헌','배치','배열','배출',
-          '남은','남자','남녀','남성',
-          '허용','허리','심한','심각','심리','심미','심해','심장',
-          '노출','노력','노화','노인','하지','하루','하나','하시','하셔','하였',
-          '오시','오래','오히','오스','오해',
-          '공간','공급','공포','공유',
-          '진행','진단','진료','진통','진정','진짜',
-          '마취','마감','마찬','마무','마지',
-          '어금','어디','어르','어느',
-          '방법','방치','방해','방지','방문',
-          '차이','차단','차지','차원',
-          '권장','권고','장단','장기','장치','장착','민감',
-          '고혈압','구내염','성장기','성공률','전신질','전신마','전신건',
-          '임플란','임플렌','임산부','유치원','유지보','배농술',
-          '서산','홍성','논산','강릉','김포','김해','안양','안산','공주','전주','문경',
-          '대전','세종','청주','천안','아산','당진','보령','제천','충주','예산','음성',
-        ])
-        let nameReplaced = 0
-
-        // 성(1글자) + 이름(2글자) + 호칭(씨/님)만 매칭
-        const namePattern = new RegExp(`([${SURNAMES}])([가-힣]{2})(\\s*)(씨|님)`, 'g')
-        html = html.replace(namePattern, (match, surname, name, space, suffix) => {
-          const fullName = surname + name
-          if (SKIP.has(fullName)) return match
-          if (SKIP.has(name)) return match  // 이름부분이 동사형 등
-          if (name.endsWith('모')) return match  // 이미 "X모" 형태
-          if (fullName === '문석준') return match  // 저자 이름
-          nameReplaced++
-          return `${surname}모 씨`
-        })
-
-        if (nameReplaced > 0) {
-          console.warn(`[실명필터] ${nameReplaced}개 환자 실명 → 익명화 치환 완료`)
+        const { html: anonymizedHtml, replacements } = anonymizeRealNames(bestContent.content_html || '')
+        if (replacements.length > 0) {
+          console.warn(`[실명필터] ${replacements.length}개 환자 실명 → 익명화 치환 완료`)
         }
-        bestContent.content_html = html
+        bestContent.content_html = anonymizedHtml
       }
 
       // === 0.5단계: 비용/보험 콘텐츠 후처리 (Claude가 여전히 삽입할 경우 제거) ===
@@ -895,6 +850,22 @@ ${tocItems}</ol>
       await c.env.DB.prepare(
         "UPDATE keywords SET used_count = used_count + 1, last_used_at = datetime('now') WHERE id = ?"
       ).bind(kw.id).run()
+
+      // === ★ v6.2: 콘텐츠 크기 검증 — Inblog 1MB 제한 대응 ===
+      const htmlSizeBytes = new TextEncoder().encode(finalHtml).length
+      const htmlSizeKB = Math.round(htmlSizeBytes / 1024)
+      if (htmlSizeBytes > 900000) {
+        // 900KB 초과 시 data URI 이미지 제거 + 경고
+        finalHtml = finalHtml
+          .replace(/<figure[^>]*>[\s\S]*?<img[^>]*src=["']data:image[^"']*["'][^>]*>[\s\S]*?<\/figure>/gi, '')
+          .replace(/<img[^>]*src=["']data:image[^"']*["'][^>]*\/?>/gi, '')
+        const newSize = new TextEncoder().encode(finalHtml).length
+        console.warn(`[크기검증] HTML ${htmlSizeKB}KB → ${Math.round(newSize / 1024)}KB (data URI 이미지 제거)`)
+        // DB도 업데이트
+        await c.env.DB.prepare(
+          `UPDATE contents SET content_html = ? WHERE id = ?`
+        ).bind(finalHtml, contentId).run()
+      }
 
       // === 자동 발행 ===
       let publishStatus = 'draft'
@@ -1475,12 +1446,23 @@ cronApp.post('/publish-next', async (c) => {
       console.warn('[publish-next] 작성자 ID 조회 실패 (null로 진행):', e.message)
     }
 
+    // ★ v6.2: 발행 전 HTML 크기 검증 — Inblog 1MB 제한
+    let publishHtml = draft.content_html || ''
+    const draftSizeBytes = new TextEncoder().encode(publishHtml).length
+    if (draftSizeBytes > 900000) {
+      publishHtml = publishHtml
+        .replace(/<figure[^>]*>[\s\S]*?<img[^>]*src=["']data:image[^"']*["'][^>]*>[\s\S]*?<\/figure>/gi, '')
+        .replace(/<img[^>]*src=["']data:image[^"']*["'][^>]*\/?>/gi, '')
+      console.warn(`[publish-next] HTML 크기 축소: ${Math.round(draftSizeBytes / 1024)}KB → ${Math.round(new TextEncoder().encode(publishHtml).length / 1024)}KB`)
+      await c.env.DB.prepare("UPDATE contents SET content_html = ? WHERE id = ?").bind(publishHtml, draft.id).run()
+    }
+
     // 인블로그에 포스트 생성
     const createResult = await createInblogPost(inblogApiKey, {
       title: draft.title,
       slug: draft.slug,
       description: draft.meta_description,
-      content_html: draft.content_html,
+      content_html: publishHtml,
       meta_description: draft.meta_description,
       image: draft.thumbnail_url
     }, tagIds, authorId)

@@ -2105,16 +2105,17 @@ function calculateQuestionRelevance(question: string, keyword: string): number {
 }
 
 
-// ===== 이미지 URL 일괄 수정 (inblogauto.pages.dev → Pollinations 영구 URL) =====
+// ===== 이미지 URL 일괄 수정 (깨진 이미지 → 플레이스홀더 교체) =====
 enhancementRoutes.post('/fix-images', async (c) => {
   const { update_inblog, dry_run } = await c.req.json().catch(() => ({ update_inblog: false, dry_run: true }))
   
-  // 깨진 이미지 URL 패턴
+  // 깨진 이미지 URL 패턴 (자체 API 이미지 + 중단된 Pollinations)
   const brokenPattern = /https:\/\/inblogauto\.pages\.dev\/api\/image\/(\d+)\/(thumbnail|body_\d+)\.jpg/g
+  const pollinationsPattern = /https:\/\/image\.pollinations\.ai\/[^"'\s<>)]+/g
   
   // 발행된 콘텐츠 조회
   const contents: any[] = await c.env.DB.prepare(
-    "SELECT id, keyword_text, content_html, thumbnail_url, slug FROM contents WHERE content_html LIKE '%inblogauto.pages.dev/api/image%'"
+    "SELECT id, keyword_text, content_html, thumbnail_url, slug FROM contents WHERE content_html LIKE '%inblogauto.pages.dev/api/image%' OR content_html LIKE '%pollinations.ai%'"
   ).all().then((r: any) => r.results || [])
   
   if (!contents.length) {
@@ -2134,40 +2135,32 @@ enhancementRoutes.post('/fix-images', async (c) => {
     } catch {}
   }
 
+  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', '0891B2', '7C3AED', '059669']
   for (const content of contents) {
     let newHtml = content.content_html
     let newThumb = content.thumbnail_url || ''
     const replacements: string[] = []
+    const keyword = content.keyword_text || '치과'
+    const colorIdx = Math.abs(content.id) % colors.length
     
-    // 모든 깨진 이미지 URL을 Pollinations URL로 교체
+    // 깨진 자체 API 이미지 → 플레이스홀더
     newHtml = newHtml.replace(brokenPattern, (match: string, contentId: string, imageType: string) => {
-      const keyword = content.keyword_text || '치과'
-      const seed = parseInt(contentId) * 1000 + (imageType === 'thumbnail' ? 1 : parseInt(imageType.replace('body_', '')) + 2)
-      
-      let prompt: string
       const w = imageType === 'thumbnail' ? 1200 : 1200
       const h = imageType === 'thumbnail' ? 630 : 800
-      
-      if (imageType === 'thumbnail') {
-        prompt = `High quality photorealistic 3D dental medical illustration related to ${keyword}, clean modern design, soft pastel blue mint colors, no text, no human faces, professional healthcare`
-      } else {
-        prompt = `High quality 3D dental medical illustration for ${keyword} article, clean infographic style, soft pastel colors, no text, no faces, professional`
-      }
-      
-      const encoded = encodeURIComponent(prompt.substring(0, 180))
-      const polUrl = `https://image.pollinations.ai/prompt/${encoded}?width=${w}&height=${h}&seed=${seed}&nologo=true&model=turbo`
-      replacements.push(`${imageType} → Pollinations`)
-      return polUrl
+      replacements.push(`${imageType} → placehold.co`)
+      return `https://placehold.co/${w}x${h}/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
+    })
+    
+    // 중단된 Pollinations URL → 플레이스홀더
+    newHtml = newHtml.replace(pollinationsPattern, () => {
+      replacements.push('pollinations → placehold.co')
+      return `https://placehold.co/1200x630/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
     })
     
     // 썸네일 URL도 교체
-    if (newThumb.includes('inblogauto.pages.dev/api/image')) {
-      const keyword = content.keyword_text || '치과'
-      const seed = content.id * 1000 + 1
-      const prompt = `High quality photorealistic 3D dental medical illustration related to ${keyword}, clean modern design, soft pastel blue mint colors, no text, no human faces, professional healthcare`
-      const encoded = encodeURIComponent(prompt.substring(0, 180))
-      newThumb = `https://image.pollinations.ai/prompt/${encoded}?width=1200&height=630&seed=${seed}&nologo=true&model=turbo`
-      replacements.push('thumbnail_url → Pollinations')
+    if (newThumb.includes('inblogauto.pages.dev/api/image') || newThumb.includes('pollinations.ai')) {
+      newThumb = `https://placehold.co/1200x630/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
+      replacements.push('thumbnail_url → placehold.co')
     }
     
     if (replacements.length === 0) continue
@@ -2554,5 +2547,7 @@ export {
   sendNotification,
   injectToc,
   injectCta,
-  buildCtaHtml
+  buildCtaHtml,
+  anonymizeRealNames,
+  detectRealNames
 }
