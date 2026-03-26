@@ -374,11 +374,9 @@ cronApp.post('/generate', async (c) => {
     'oral_surgery',       // 23. 구강외과/외상
     'halitosis',          // 24. 구취/입냄새
     'perio_surgery',      // 25. 치주수술
-    'tooth_crack',        // 26. 치아균열/마모
-    'prosthetics',        // 27. 보철 총론
-    'digital_dental',     // 28. 디지털치과/최신기술
-    'special_patient',    // 29. 특수환자(임산부/당뇨)
-    'emergency',          // 30. 응급/치통
+    'tooth_crack',        // 26. 치아균열/마모/오버레이
+    'prosthetics',        // 27. 보철/포스트코어
+    'emergency',          // 28. 응급/치통
   ]
 
   // subcategory → DB subcategory 매핑 (classifyKeyword의 subcategory 값과 매칭)
@@ -408,10 +406,8 @@ cronApp.post('/generate', async (c) => {
     'oral_surgery':   { categories: ['general'], subcategories: ['구강외과','구강점막'] },
     'halitosis':      { categories: ['general'], subcategories: ['구취','구강건조'] },
     'perio_surgery':  { categories: ['general'], subcategories: ['치주수술'] },
-    'tooth_crack':    { categories: ['general'], subcategories: ['치아균열','치아마모'] },
-    'prosthetics':    { categories: ['general'], subcategories: ['보철'] },
-    'digital_dental': { categories: ['general'], subcategories: ['디지털치과'] },
-    'special_patient':{ categories: ['general'], subcategories: ['특수환자'] },
+    'tooth_crack':    { categories: ['general'], subcategories: ['치아균열','치아마모','오버레이'] },
+    'prosthetics':    { categories: ['general'], subcategories: ['보철','포스트코어'] },
     'emergency':      { categories: ['general'], subcategories: ['응급'] },
   }
 
