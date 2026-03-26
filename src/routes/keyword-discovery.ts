@@ -1247,7 +1247,8 @@ keywordDiscoveryRoutes.post('/auto-replenish', async (c) => {
   const result = await autoReplenishKeywords(c.env.DB, {
     postsPerDay,
     thresholdDays: forceRun ? 9999 : thresholdDays,
-    targetDays
+    targetDays,
+    forceCuratedAll: forceRun  // force일 때 큐레이션 키워드 전부 투입
   })
   
   return c.json(result)
@@ -1325,6 +1326,7 @@ async function autoReplenishKeywords(db: D1Database, options?: {
   postsPerDay?: number
   thresholdDays?: number
   targetDays?: number
+  forceCuratedAll?: boolean  // true이면 큐레이션 키워드 전부 투입 (개수 제한 없이)
 }): Promise<{
   triggered: boolean
   reason: string
@@ -1361,8 +1363,9 @@ async function autoReplenishKeywords(db: D1Database, options?: {
   // 셔플해서 다양한 카테고리가 고르게 들어가게
   const shuffled = curated.sort(() => Math.random() - 0.5)
   
+  const forceCuratedAll = options?.forceCuratedAll || false
   for (const kw of shuffled) {
-    if (totalSaved >= (targetDays * postsPerDay) - unusedCount) break
+    if (!forceCuratedAll && totalSaved >= (targetDays * postsPerDay) - unusedCount) break
     
     const existing = await db.prepare('SELECT id FROM keywords WHERE keyword = ? LIMIT 1').bind(kw).first()
     if (existing) continue
