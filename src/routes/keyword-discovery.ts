@@ -1358,26 +1358,34 @@ async function autoReplenishKeywords(db: D1Database, options?: {
   let totalSaved = 0
   const allDetails: any[] = []
 
-  // Phase 1: 큐레이션 키워드 투입
+  // Phase 1: 큐레이션 키워드 투입 (D1 batch로 최적화)
   const curated = getCuratedKeywords()
-  // 셔플해서 다양한 카테고리가 고르게 들어가게
-  const shuffled = curated.sort(() => Math.random() - 0.5)
-  
   const forceCuratedAll = options?.forceCuratedAll || false
-  for (const kw of shuffled) {
-    if (!forceCuratedAll && totalSaved >= (targetDays * postsPerDay) - unusedCount) break
-    
-    const existing = await db.prepare('SELECT id FROM keywords WHERE keyword = ? LIMIT 1').bind(kw).first()
-    if (existing) continue
-
-    const classification = classifyKeyword(kw)
-    try {
-      await db.prepare(
+  
+  // 기존 키워드를 한 번에 조회하여 중복 체크 최적화
+  const existingRows = await db.prepare('SELECT keyword FROM keywords').all()
+  const existingSet = new Set((existingRows.results || []).map((r: any) => r.keyword))
+  
+  // 미존재 큐레이션 키워드만 필터
+  const newCurated = curated.filter(kw => !existingSet.has(kw))
+  const limit = forceCuratedAll ? newCurated.length : Math.max(0, (targetDays * postsPerDay) - unusedCount)
+  const toInsert = newCurated.slice(0, limit)
+  
+  // D1 batch로 한 번에 INSERT
+  if (toInsert.length > 0) {
+    const batchStmts = toInsert.map(kw => {
+      const classification = classifyKeyword(kw)
+      return db.prepare(
         `INSERT OR IGNORE INTO keywords (keyword, category, subcategory, search_intent, priority, is_active)
          VALUES (?, ?, ?, ?, ?, 1)`
-      ).bind(kw, classification.category, classification.subcategory, classification.search_intent, classification.priority).run()
-      totalSaved++
-    } catch {}
+      ).bind(kw, classification.category, classification.subcategory, classification.search_intent, classification.priority)
+    })
+    // D1 batch는 한 번에 최대 100개 → 100개씩 나눠서 실행
+    for (let i = 0; i < batchStmts.length; i += 100) {
+      const chunk = batchStmts.slice(i, i + 100)
+      await db.batch(chunk)
+    }
+    totalSaved = toInsert.length
   }
   if (totalSaved > 0) allDetails.push({ source: 'curated', saved: totalSaved })
 
