@@ -140,9 +140,35 @@ dashboardRoutes.get('/stats', async (c) => {
     }
   })
 
+  // ★ v7.3: subcategory별 발행 분포 (키워드 풀 + 발행 현황)
+  const subcatKeywordPool = await c.env.DB.prepare(
+    `SELECT subcategory, COUNT(*) as pool_count,
+       SUM(CASE WHEN used_count > 0 THEN 1 ELSE 0 END) as used_count
+     FROM keywords WHERE is_active = 1 GROUP BY subcategory ORDER BY pool_count DESC`
+  ).all()
+  const subcatPublished = await c.env.DB.prepare(
+    `SELECT k.subcategory, COUNT(*) as pub_count
+     FROM contents c JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status IN ('published', 'draft')
+     GROUP BY k.subcategory ORDER BY pub_count DESC`
+  ).all()
+  const subcatPubMap: Record<string, number> = {}
+  ;(subcatPublished.results || []).forEach((r: any) => { subcatPubMap[r.subcategory] = r.pub_count })
+  const subcategoryDistribution = (subcatKeywordPool.results || []).map((r: any) => ({
+    subcategory: r.subcategory,
+    pool: r.pool_count,
+    used: r.used_count,
+    published: subcatPubMap[r.subcategory] || 0
+  }))
+
+  // subcategory 라운드 로빈 현재 인덱스
+  const subcatIdxRow = await c.env.DB.prepare(
+    "SELECT value FROM settings WHERE key = 'subcategory_rotation_index'"
+  ).first()
+
   // 다음 발행 예정 키워드 (사용 횟수 적고 우선순위 높은 것)
   const upcoming = await c.env.DB.prepare(
-    `SELECT k.id, k.keyword, k.category, k.priority, k.used_count FROM keywords k 
+    `SELECT k.id, k.keyword, k.category, k.subcategory, k.priority, k.used_count FROM keywords k 
      WHERE k.is_active = 1 
      ORDER BY k.used_count ASC, k.priority DESC 
      LIMIT 5`
@@ -211,11 +237,16 @@ dashboardRoutes.get('/stats', async (c) => {
       usage_by_category: keywordUsageByCategory
     },
 
+    // subcategory 분포 (v7.3)
+    subcategory_distribution: subcategoryDistribution,
+    subcategory_rotation_index: parseInt(subcatIdxRow?.value as string || '0'),
+
     // 목록
     upcoming: upcoming.results.map((k: any) => ({
       id: k.id,
       keyword: k.keyword,
       category: k.category,
+      subcategory: k.subcategory,
       priority: k.priority,
       used_count: k.used_count,
       scheduled_time: '예정'

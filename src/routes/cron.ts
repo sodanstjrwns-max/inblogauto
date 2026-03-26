@@ -346,9 +346,46 @@ cronApp.post('/generate', async (c) => {
   } else {
     count = postsPerDay // 슬롯 미지정 수동: 전체
   }
-  // ★ v7.2: 키워드 풀 비율에 맞게 가중치 조정 (general 58%, implant 19%, orthodontics 15%, prevention 8%)
-  // 기존: implant 30% → general/임플란트 편중. 신규: general 중심 균등 분배
-  const categoryWeights = JSON.parse(schedule?.category_weights || '{"general":40,"implant":20,"orthodontics":25,"prevention":15}')
+  // ★ v7.3: subcategory 라운드 로빈 — 매 발행마다 다른 주제 보장
+  // 16개 subcategory를 순환하면서 선택 → 라미네이트/크라운/턱관절/인레이 등 골고루
+  const SUBCATEGORY_ROTATION = [
+    'implant_general',    // 임플란트 일반
+    'crown_prosth',       // 크라운/보철
+    'laminate_cosmetic',  // 라미네이트/심미
+    'tmj_bruxism',        // 턱관절/이갈이
+    'inlay_onlay',        // 인레이/온레이
+    'orthodontics',       // 교정
+    'cavity_resin',       // 충치/레진
+    'wisdom_extraction',  // 사랑니/발치
+    'gum_perio',          // 잇몸/치주
+    'root_canal',         // 신경치료
+    'whitening',          // 미백
+    'denture',            // 틀니
+    'bridge',             // 브릿지
+    'sensitivity',        // 시린이
+    'prevention',         // 예방/스케일링
+    'emergency_pain',     // 응급/치통
+  ]
+
+  // subcategory → DB subcategory 매핑 (keywords 테이블의 subcategory 값)
+  const SUBCAT_DB_MAP: Record<string, { categories: string[], subcategories: string[], keywordPatterns?: RegExp }> = {
+    'implant_general':    { categories: ['implant'], subcategories: ['일반','과정','회복','관리','불안','특수','적응증','문제','비교'] },
+    'crown_prosth':       { categories: ['general'], subcategories: ['보철'], keywordPatterns: /크라운|보철/ },
+    'laminate_cosmetic':  { categories: ['general'], subcategories: ['심미'], keywordPatterns: /라미네이트|미백|치아\s*성형|하얗|누런/ },
+    'tmj_bruxism':        { categories: ['general'], subcategories: ['턱관절'], keywordPatterns: /턱관절|이갈이|악관절/ },
+    'inlay_onlay':        { categories: ['general'], subcategories: ['보철'], keywordPatterns: /인레이|온레이/ },
+    'orthodontics':       { categories: ['orthodontics'], subcategories: ['일반','비교','소아','과정','부작용','관리'] },
+    'cavity_resin':       { categories: ['general'], subcategories: ['충치'], keywordPatterns: /충치|레진/ },
+    'wisdom_extraction':  { categories: ['general'], subcategories: ['발치'], keywordPatterns: /사랑니|발치/ },
+    'gum_perio':          { categories: ['general'], subcategories: ['잇몸'], keywordPatterns: /잇몸|치주|치은|치석/ },
+    'root_canal':         { categories: ['general'], subcategories: ['신경치료'], keywordPatterns: /신경치료|신경/ },
+    'whitening':          { categories: ['general'], subcategories: ['심미'], keywordPatterns: /미백/ },
+    'denture':            { categories: ['general'], subcategories: ['틀니'], keywordPatterns: /틀니|의치/ },
+    'bridge':             { categories: ['general'], subcategories: ['브릿지'], keywordPatterns: /브릿지/ },
+    'sensitivity':        { categories: ['general'], subcategories: ['시린이'], keywordPatterns: /시린이|시림/ },
+    'prevention':         { categories: ['prevention'], subcategories: ['스케일링','소아','예방'] },
+    'emergency_pain':     { categories: ['general'], subcategories: ['응급'], keywordPatterns: /통증|응급|아프|부러|빠졌|치통/ },
+  }
 
   // 자동 발행 설정 확인
   if (!isManual) {
@@ -401,107 +438,110 @@ cronApp.post('/generate', async (c) => {
   ).all()
   const usedKeywordIds = new Set((usedKeywordRows.results || []).map((r: any) => r.keyword_id))
 
-  // 키워드 자동 선택 (카테고리 가중치 기반 + 중복 제외)
-  const totalWeight = Object.values(categoryWeights).reduce((s: number, v: any) => s + (v as number), 0)
+  // ★ v7.3: subcategory 라운드 로빈 키워드 선택
+  // count=1 (Cron 매 호출)에서도 매번 다른 주제가 나오도록 보장
   const keywords: any[] = []
 
   // 차단 키워드 필터 (비용/보험 + 후기/추천 + 쓰레기 키워드)
   const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|후기|리뷰|맛집|환절기|황사|알레르기|구내염|마스크\s*구취/
 
-  // ===== 가중치 기반 카테고리 할당 (count가 작을 때도 정확히 동작) =====
-  // Largest Remainder Method: 소수점 이하를 버리지 않고, 나머지가 큰 순서대로 1개씩 배분
-  const catEntries = Object.entries(categoryWeights)
-  const rawShares = catEntries.map(([cat, w]) => ({
-    cat,
-    raw: count * ((w as number) / totalWeight),
-    floor: Math.floor(count * ((w as number) / totalWeight)),
-    remainder: (count * ((w as number) / totalWeight)) % 1
-  }))
-  let allocated = rawShares.reduce((s, r) => s + r.floor, 0)
-  // 나머지가 큰 순서로 +1씩 배분
-  rawShares.sort((a, b) => b.remainder - a.remainder)
-  for (const share of rawShares) {
-    if (allocated >= count) break
-    if (share.remainder > 0) {
-      share.floor += 1
-      allocated += 1
-    }
-  }
-  // 그래도 부족하면 (count=1인데 모든 remainder가 0인 극단적 경우) 가중치 최대 카테고리에 1 배분
-  if (allocated < count) {
-    const maxCat = rawShares.reduce((a, b) => (categoryWeights[a.cat] > categoryWeights[b.cat] ? a : b))
-    maxCat.floor += (count - allocated)
-  }
+  // subcategory 로테이션 인덱스 읽기 (DB 저장)
+  const subcatIdxRow = await c.env.DB.prepare(
+    "SELECT value FROM settings WHERE key = 'subcategory_rotation_index'"
+  ).first()
+  let subcatIdx = parseInt(subcatIdxRow?.value as string || '0')
+  if (isNaN(subcatIdx) || subcatIdx < 0) subcatIdx = 0
 
-  for (const { cat, floor: catCount } of rawShares) {
-    if (catCount === 0) continue
+  // 최근 5개 발행글의 subcategory 확인 → 중복 방지
+  const recentSubcats = await c.env.DB.prepare(
+    `SELECT k.subcategory, k.category, k.keyword FROM contents c
+     LEFT JOIN keywords k ON c.keyword_id = k.id
+     WHERE c.status IN ('published', 'draft')
+     ORDER BY c.created_at DESC LIMIT 5`
+  ).all()
+  const recentSubcatSet = new Set(
+    (recentSubcats.results || []).map((r: any) => r.subcategory).filter(Boolean)
+  )
+  const recentKeywords = new Set(
+    (recentSubcats.results || []).map((r: any) => r.keyword).filter(Boolean)
+  )
 
-    // 우선: 아직 콘텐츠가 없는 키워드 (비용/보험 키워드 제외)
+  // subcategory별 키워드 선택 함수
+  async function pickKeywordFromSubcat(subcatKey: string): Promise<any | null> {
+    const mapping = SUBCAT_DB_MAP[subcatKey]
+    if (!mapping) return null
+
+    // 카테고리 + subcategory 기반 쿼리
+    const placeholders = mapping.categories.map(() => '?').join(',')
+    const subPlaceholders = mapping.subcategories.map(() => '?').join(',')
+    
     const results = await c.env.DB.prepare(
       `SELECT * FROM keywords 
-       WHERE is_active = 1 AND category = ?
+       WHERE is_active = 1 AND category IN (${placeholders}) AND subcategory IN (${subPlaceholders})
        ORDER BY used_count ASC, priority DESC, RANDOM()
-       LIMIT ?`
-    ).bind(cat, catCount * 5).all() // 5배로 가져와서 비용/보험 필터링 후 선별
-    
-    const allResults = (results.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword))
-    const filtered = allResults.filter((k: any) => !usedKeywordIds.has(k.id))
-    const fallback = allResults.filter((k: any) => usedKeywordIds.has(k.id))
-    // 미사용 키워드 우선, 부족하면 기사용 키워드도 허용
-    keywords.push(...filtered.slice(0, catCount), ...fallback.slice(0, Math.max(0, catCount - filtered.length)))
+       LIMIT 20`
+    ).bind(...mapping.categories, ...mapping.subcategories).all()
+
+    let candidates = (results.results || []).filter((k: any) => {
+      if (COST_INSURANCE_FILTER.test(k.keyword)) return false
+      // keywordPatterns가 있으면 추가 필터 (같은 subcategory에 섞여있는 경우 정확히 매칭)
+      if (mapping.keywordPatterns && !mapping.keywordPatterns.test(k.keyword)) return false
+      // 최근 발행된 동일 키워드 제외
+      if (recentKeywords.has(k.keyword)) return false
+      return true
+    })
+
+    // 미사용 키워드 우선
+    const unused = candidates.filter((k: any) => !usedKeywordIds.has(k.id))
+    const used = candidates.filter((k: any) => usedKeywordIds.has(k.id))
+    return unused[0] || used[0] || null
   }
 
-  // 부족하면 추가 (중복 방지 필터 적용)
-  if (keywords.length < count) {
-    // ★ v6.2: SQL 인젝션 방지 — excludeIds를 파라미터화
-    const existingIds = new Set(keywords.map((k: any) => k.id))
-    const extra = await c.env.DB.prepare(
-      `SELECT * FROM keywords 
-       WHERE is_active = 1
-       ORDER BY used_count ASC, priority DESC, RANDOM()
-       LIMIT ?`
-    ).bind((count - keywords.length) * 10).all()
-    // 비용/보험 키워드 제외 + 기존 선택 제외 + 미사용 우선
-    const extraAll = (extra.results || []).filter((k: any) => !COST_INSURANCE_FILTER.test(k.keyword) && !existingIds.has(k.id))
-    const extraFiltered = extraAll.filter((k: any) => !usedKeywordIds.has(k.id))
-    const extraFallback = extraAll.filter((k: any) => usedKeywordIds.has(k.id))
-    keywords.push(...extraFiltered, ...extraFallback)
-  }
-
-  // ===== v5: 카테고리 연속 발행 방지 — 같은 카테고리 2연속 금지 =====
-  const rawSelected = keywords.slice(0, count)
-  
-  // 최근 발행된 콘텐츠의 카테고리 확인
-  const recentPost = await c.env.DB.prepare(
-    `SELECT k.category FROM contents c 
-     LEFT JOIN keywords k ON c.keyword_id = k.id 
-     WHERE c.status IN ('published', 'draft') 
-     ORDER BY c.created_at DESC LIMIT 1`
-  ).first()
-  const lastCategory = recentPost?.category as string || ''
-  
-  // 카테고리 분산 정렬: 같은 카테고리가 연속되지 않도록 재배치
+  // 라운드 로빈: count만큼 선택 (각각 다른 subcategory)
   const selectedKeywords: any[] = []
-  const remaining = [...rawSelected]
-  let prevCat = lastCategory
-  
-  while (remaining.length > 0) {
-    // 이전과 다른 카테고리 우선 선택
-    const diffCatIdx = remaining.findIndex(k => (k.category || 'general') !== prevCat)
-    if (diffCatIdx !== -1) {
-      const picked = remaining.splice(diffCatIdx, 1)[0]
-      selectedKeywords.push(picked)
-      prevCat = picked.category || 'general'
+  let attempts = 0
+  const maxAttempts = SUBCATEGORY_ROTATION.length * 2 // 2바퀴까지 시도
+
+  while (selectedKeywords.length < count && attempts < maxAttempts) {
+    const currentSubcat = SUBCATEGORY_ROTATION[subcatIdx % SUBCATEGORY_ROTATION.length]
+    subcatIdx++
+    attempts++
+
+    const kw = await pickKeywordFromSubcat(currentSubcat)
+    if (kw) {
+      // 최근 5개와 같은 subcategory면 스킵 (다양성 극대화)
+      const kwSubcat = kw.subcategory as string
+      if (recentSubcatSet.has(kwSubcat) && attempts <= SUBCATEGORY_ROTATION.length) {
+        console.log(`[v7.3 다양성] ${currentSubcat}(${kwSubcat}) 최근 발행됨, 다음 주제로`)
+        continue
+      }
+      selectedKeywords.push(kw)
+      console.log(`[v7.3 선택] ${currentSubcat} → "${kw.keyword}" (subcat=${kwSubcat}, used=${kw.used_count})`)
     } else {
-      // 전부 같은 카테고리면 어쩔 수 없이 넣음
-      const picked = remaining.shift()
-      selectedKeywords.push(picked)
-      prevCat = picked.category || 'general'
+      console.log(`[v7.3 스킵] ${currentSubcat} — 사용 가능한 키워드 없음`)
     }
   }
+
+  // 라운드 로빈으로 부족하면 폴백: 전체 풀에서 미사용 키워드 랜덤 선택
+  if (selectedKeywords.length < count) {
+    const existingIds = new Set(selectedKeywords.map((k: any) => k.id))
+    const extra = await c.env.DB.prepare(
+      `SELECT * FROM keywords WHERE is_active = 1
+       ORDER BY used_count ASC, priority DESC, RANDOM() LIMIT ?`
+    ).bind((count - selectedKeywords.length) * 10).all()
+    const extraFiltered = (extra.results || []).filter((k: any) => 
+      !COST_INSURANCE_FILTER.test(k.keyword) && !existingIds.has(k.id) && !usedKeywordIds.has(k.id)
+    )
+    selectedKeywords.push(...extraFiltered.slice(0, count - selectedKeywords.length))
+  }
+
+  // subcategory 인덱스 저장 (다음 Cron 호출 시 이어서)
+  await c.env.DB.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('subcategory_rotation_index', ?)"
+  ).bind(String(subcatIdx)).run()
   
   const results: any[] = []
-  console.log(`[Cron] count=${count}, keywords pool=${keywords.length}, selected=${selectedKeywords.length}, isManual=${isManual}, prevCat=${lastCategory}`)
+  console.log(`[Cron] count=${count}, selected=${selectedKeywords.length}, isManual=${isManual}, subcatIdx=${subcatIdx}`)
 
   // Inblog API 정보 사전 검증 (자동 발행 시)
   let inblogApiInfo: any = null

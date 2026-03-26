@@ -792,6 +792,51 @@ keywordDiscoveryRoutes.post('/auto-replenish', async (c) => {
   return c.json(result)
 })
 
+// ★ v7.3: POST /api/keyword-discovery/reclassify — 기존 키워드 재분류
+// 프로덕션에서 잘못 분류된 키워드를 일괄 재분류
+keywordDiscoveryRoutes.post('/reclassify', async (c) => {
+  const body = await c.req.json().catch(() => ({}))
+  const dryRun = (body as any).dry_run !== false // 기본 dry_run=true
+
+  // 전체 키워드 조회
+  const allKeywords = await c.env.DB.prepare(
+    "SELECT id, keyword, category, subcategory FROM keywords"
+  ).all()
+
+  const changes: any[] = []
+  let unchanged = 0
+
+  for (const kw of (allKeywords.results || [])) {
+    const newClassification = classifyKeyword(kw.keyword as string)
+    if (newClassification.category !== kw.category || newClassification.subcategory !== kw.subcategory) {
+      changes.push({
+        id: kw.id,
+        keyword: kw.keyword,
+        old: { category: kw.category, subcategory: kw.subcategory },
+        new: { category: newClassification.category, subcategory: newClassification.subcategory, priority: newClassification.priority }
+      })
+      if (!dryRun) {
+        await c.env.DB.prepare(
+          "UPDATE keywords SET category = ?, subcategory = ?, priority = ? WHERE id = ?"
+        ).bind(newClassification.category, newClassification.subcategory, newClassification.priority, kw.id).run()
+      }
+    } else {
+      unchanged++
+    }
+  }
+
+  return c.json({
+    dry_run: dryRun,
+    total_keywords: (allKeywords.results || []).length,
+    reclassified: changes.length,
+    unchanged,
+    changes: changes.slice(0, 50), // 최대 50개만 표시
+    message: dryRun 
+      ? `${changes.length}개 키워드 재분류 필요 (dry_run=true, 실제 적용은 dry_run:false로 호출)`
+      : `${changes.length}개 키워드 재분류 완료`
+  })
+})
+
 // GET /api/keyword-discovery/seasonal — 이번 달 큐레이션 키워드 확인
 keywordDiscoveryRoutes.get('/seasonal', async (c) => {
   const keywords = getCuratedKeywords()
