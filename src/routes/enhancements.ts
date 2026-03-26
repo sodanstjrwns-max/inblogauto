@@ -2226,6 +2226,324 @@ enhancementRoutes.post('/fix-images', async (c) => {
   })
 })
 
+// ===== 실명 전수 검사 & 익명화 시스템 =====
+// 공통: 실명 탐지 로직 (cron.ts의 후처리 필터와 동일 + 오탐 강화)
+const COMMON_SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배조백허노남심하주우곽성차유구연'
+
+// 오탐 방지: 일반 단어/의학용어/지명/동사형 skipList
+const REALNAME_SKIP_WORDS = new Set([
+  // 안~
+  '안전', '안정', '안내', '안과', '안심', '안면', '안쪽', '안되',
+  // 전~
+  '전문', '전체', '전혀', '전후', '전달', '전날', '전반', '전신',
+  // 정~
+  '정상', '정확', '정도', '정보', '정기', '정말', '정밀', '정리', '정에서',
+  // 주~
+  '주의', '주변', '주치', '주기', '주요', '주로', '주사',
+  // 이~
+  '이식', '이상', '이후', '이전', '이물', '이때', '이런', '이유',
+  // 신~
+  '신경', '신장', '신체', '신질', '신거', '신속', '신뢰',
+  // 임~
+  '임상', '임시', '임플', '임신',
+  // 한~
+  '한번', '한편', '한쪽', '한국', '한약', '한치', '한마', '한밤', '한동',
+  // 최~
+  '최고', '최선', '최대', '최소', '최근', '최초', '최신', '최적',
+  // 강~
+  '강력', '강한', '강도', '강해', '강요', '강화',
+  // 조~
+  '조금', '조건', '조직', '조기', '조절',
+  // 유~
+  '유지', '유의', '유형', '유발', '유치', '유리', '유사',
+  // 문~
+  '문의', '문제', '문헌',
+  // 배~
+  '배치', '배열', '배출',
+  // 남~
+  '남은', '남자', '남녀', '남성',
+  // 허~
+  '허용', '허리',
+  // 심~
+  '심한', '심각', '심리', '심미', '심해', '심장',
+  // 노~
+  '노출', '노력', '노화', '노인',
+  // 하~
+  '하지', '하루', '하나', '하시', '하셔', '하였',
+  // 오~
+  '오시', '오래', '오히', '오스', '오해',
+  // 공~
+  '공간', '공급', '공포', '공유',
+  // 기타 (진~, 마~, 방~ 등)
+  '진행', '진단', '진료', '진통', '진정', '진짜',
+  '마취', '마감', '마찬', '마무', '마지',
+  '어금', '어디', '어르', '어느',
+  '방법', '방치', '방해', '방지', '방문',
+  '차이', '차단', '차지', '차원',
+  '권장', '권고',
+  '장단', '장기', '장치', '장착',
+  '민감',
+  // 의학 용어 (성씨+2글자 형태지만 실명 아닌 것들)
+  '고혈압', '구내염', '구강건', '구강내', '구강외', '구강위',
+  '성장기', '성공률', '성인에', '성별에',
+  '전신질', '전신마', '전신건', '전신상',
+  '장기간', '장기적',
+  '임플란', '임플렌', '임산부',
+  '유치원', '유지보',
+  '배농술',
+  // 동사/형용사형 2글자 (성씨 뒤에 올 수 있지만 이름 아닌 것)
+  '시는', '하는', '되는', '오는', '가는', '나는', '받는', '하며', '되며', '오며',
+  '시면', '하면', '되면', '오면', '가면',
+  '시고', '하고', '되고', '오고', '가고',
+  '시다', '하다', '되다', '오다', '가다',
+  // 지역명
+  '서산', '홍성', '논산', '강릉', '김포', '김해', '안양', '안산', '공주', '전주', '문경',
+  '대전', '세종', '청주', '천안', '아산', '당진', '보령', '제천', '충주', '예산', '음성',
+])
+
+// 허용되는 이름 (저자/원장)
+const ALLOWED_NAMES = new Set(['문석준'])
+
+// 이름 후보가 실명인지 검증하는 보조 함수
+function isLikelyRealName(fullName: string, givenName: string, contextBefore: string): boolean {
+  // 1) skipWords에 있으면 → 실명 아님
+  if (REALNAME_SKIP_WORDS.has(fullName)) return false
+  // 2) 허용된 이름이면 → 탐지하지 않음
+  if (ALLOWED_NAMES.has(fullName)) return false
+  // 3) 이미 "모"로 끝나는 익명화된 이름 → 탐지하지 않음 (정하모, 안정모, 남성모 등)
+  if (givenName.endsWith('모')) return false
+  // 4) 이름 2글자가 "시는", "하는" 등 동사 어미 패턴이면 → 실명 아님
+  if (REALNAME_SKIP_WORDS.has(givenName)) return false
+  // 5) 바로 앞에 한글이 있으면(=단어 중간) → 실명 아님 (예: "고혈압 환자")
+  if (contextBefore && /[가-힣]$/.test(contextBefore)) return false
+  
+  return true
+}
+
+function detectRealNames(html: string): { fullName: string; surname: string; suffix: string; position: number }[] {
+  const found: { fullName: string; surname: string; suffix: string; position: number }[] = []
+  // HTML 태그 제거해서 순수 텍스트로 분석
+  const plain = html.replace(/<[^>]*>/g, ' ')
+  
+  // 패턴 1: 성(1글자) + 이름(2글자) + 호칭 (씨/님) — "환자"는 오탐이 심해 제외
+  const nameWithHonorific = new RegExp(`([${COMMON_SURNAMES}])([가-힣]{2})\\s*(씨|님)`, 'g')
+  let match
+  while ((match = nameWithHonorific.exec(plain)) !== null) {
+    const surname = match[1]
+    const givenName = match[2]
+    const fullName = surname + givenName
+    const suffix = match[3]
+    const contextBefore = plain.substring(Math.max(0, match.index - 1), match.index)
+    
+    if (!isLikelyRealName(fullName, givenName, contextBefore)) continue
+    
+    found.push({ fullName, surname, suffix, position: match.index })
+  }
+  
+  return found
+}
+
+function anonymizeRealNames(html: string): { html: string; replacements: { original: string; replacement: string; position: number }[] } {
+  const replacements: { original: string; replacement: string; position: number }[] = []
+  let result = html
+  
+  // 패턴: 호칭(씨/님) 붙은 실명만 → "X모 씨"
+  const nameWithHonorific = new RegExp(`([${COMMON_SURNAMES}])([가-힣]{2})(\\s*)(씨|님)`, 'g')
+  result = result.replace(nameWithHonorific, (match, surname, givenName, space, suffix, offset) => {
+    const fullName = surname + givenName
+    const contextBefore = result.substring(Math.max(0, offset - 1), offset)
+    
+    if (!isLikelyRealName(fullName, givenName, contextBefore)) return match
+    
+    const replacement = `${surname}모 씨`
+    replacements.push({ original: match, replacement, position: offset })
+    return replacement
+  })
+  
+  return { html: result, replacements }
+}
+
+// GET /api/enhancements/scan-realnames — DB 전체 콘텐츠 실명 스캔
+enhancementRoutes.get('/scan-realnames', async (c) => {
+  try {
+    const contents = await c.env.DB.prepare(
+      `SELECT c.id, c.keyword_text as keyword, c.title, c.content_html, c.status, 
+              pl.inblog_url, pl.inblog_post_id
+       FROM contents c
+       LEFT JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published'
+       ORDER BY c.id ASC`
+    ).all()
+    
+    const allResults: any[] = []
+    let totalFound = 0
+    
+    for (const content of (contents.results || []) as any[]) {
+      const html = content.content_html || ''
+      const title = content.title || ''
+      
+      // HTML 본문 + 제목에서 실명 탐지
+      const htmlNames = detectRealNames(html)
+      const titleNames = detectRealNames(title)
+      const allNames = [...htmlNames, ...titleNames.map(n => ({ ...n, position: -1 }))]
+      
+      if (allNames.length > 0) {
+        totalFound += allNames.length
+        allResults.push({
+          content_id: content.id,
+          keyword: content.keyword,
+          title: content.title,
+          status: content.status,
+          inblog_url: content.inblog_url || null,
+          inblog_post_id: content.inblog_post_id || null,
+          real_names_found: allNames.map(n => ({
+            name: n.fullName,
+            context: n.suffix,
+            in_title: n.position === -1
+          })),
+          count: allNames.length
+        })
+      }
+    }
+    
+    return c.json({
+      message: totalFound > 0 
+        ? `⚠️ ${allResults.length}개 콘텐츠에서 총 ${totalFound}건의 실명이 발견되었습니다!`
+        : '✅ 모든 콘텐츠에서 실명이 발견되지 않았습니다.',
+      total_contents_scanned: (contents.results || []).length,
+      contents_with_realnames: allResults.length,
+      total_realnames_found: totalFound,
+      details: allResults
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
+// POST /api/enhancements/fix-realnames — DB 전체 실명 익명화 처리
+enhancementRoutes.post('/fix-realnames', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const dryRun = (body as any).dry_run !== false // 기본값: dry_run=true (안전모드)
+    const updateInblog = (body as any).update_inblog === true // Inblog도 업데이트 여부
+    const targetIds: number[] | null = (body as any).content_ids || null // 특정 ID만 처리
+    
+    let query = `SELECT c.id, c.keyword_text as keyword, c.title, c.content_html, c.status,
+                        pl.inblog_url, pl.inblog_post_id
+                 FROM contents c
+                 LEFT JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published'`
+    if (targetIds && targetIds.length > 0) {
+      query += ` WHERE c.id IN (${targetIds.join(',')})`
+    }
+    query += ` ORDER BY c.id ASC`
+    
+    const contents = await c.env.DB.prepare(query).all()
+    
+    const results: any[] = []
+    let totalFixed = 0
+    let inblogUpdated = 0
+    
+    // Inblog API 키 (업데이트 시 필요)
+    let inblogApiKey = ''
+    if (updateInblog && !dryRun) {
+      const keyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
+      inblogApiKey = keyRow?.value as string || ''
+    }
+    
+    for (const content of (contents.results || []) as any[]) {
+      const html = content.content_html || ''
+      const title = content.title || ''
+      
+      // 본문 익명화
+      const { html: fixedHtml, replacements: htmlReplacements } = anonymizeRealNames(html)
+      // 제목 익명화
+      const { html: fixedTitle, replacements: titleReplacements } = anonymizeRealNames(title)
+      
+      const allReplacements = [
+        ...htmlReplacements.map(r => ({ ...r, location: 'body' })),
+        ...titleReplacements.map(r => ({ ...r, location: 'title' }))
+      ]
+      
+      if (allReplacements.length === 0) continue
+      
+      totalFixed += allReplacements.length
+      
+      if (!dryRun) {
+        // DB 업데이트
+        await c.env.DB.prepare(
+          `UPDATE contents SET content_html = ?, title = ?, updated_at = datetime('now') WHERE id = ?`
+        ).bind(fixedHtml, fixedTitle, content.id).run()
+        
+        // Inblog 업데이트 (발행된 콘텐츠만)
+        if (updateInblog && inblogApiKey && content.inblog_post_id) {
+          try {
+            const patchResp = await fetch('https://inblog.ai/api/v1/posts/' + content.inblog_post_id, {
+              method: 'PATCH',
+              headers: {
+                'Content-Type': 'application/vnd.api+json',
+                'Authorization': `Bearer ${inblogApiKey}`,
+                'Accept': 'application/vnd.api+json'
+              },
+              body: JSON.stringify({
+                jsonapi: { version: '1.0' },
+                data: {
+                  type: 'posts',
+                  id: String(content.inblog_post_id),
+                  attributes: {
+                    title: fixedTitle !== title ? fixedTitle : undefined,
+                    content_html: fixedHtml
+                  }
+                }
+              })
+            })
+            if (patchResp.ok) {
+              inblogUpdated++
+            } else {
+              console.warn(`[fix-realnames] Inblog PATCH 실패 (${content.id}): ${patchResp.status}`)
+            }
+          } catch (inblogErr: any) {
+            console.warn(`[fix-realnames] Inblog 업데이트 오류 (${content.id}):`, inblogErr.message)
+          }
+        }
+      }
+      
+      results.push({
+        content_id: content.id,
+        keyword: content.keyword,
+        title: content.title,
+        status: content.status,
+        inblog_url: content.inblog_url || null,
+        replacements: allReplacements.map(r => ({
+          original: r.original,
+          replacement: r.replacement,
+          location: r.location
+        })),
+        count: allReplacements.length
+      })
+    }
+    
+    return c.json({
+      message: dryRun
+        ? `🔍 미리보기: ${results.length}개 콘텐츠에서 ${totalFixed}건 익명화 예정 (dry_run=true)`
+        : `✅ ${results.length}개 콘텐츠에서 ${totalFixed}건 익명화 완료${inblogUpdated > 0 ? ` (Inblog ${inblogUpdated}건 업데이트)` : ''}`,
+      dry_run: dryRun,
+      total_contents_fixed: results.length,
+      total_replacements: totalFixed,
+      inblog_updated: inblogUpdated,
+      details: results,
+      usage: {
+        description: '실명 익명화 API 사용법',
+        scan_only: 'GET /api/enhancements/scan-realnames',
+        dry_run: 'POST /api/enhancements/fix-realnames (기본값: dry_run=true)',
+        apply: 'POST /api/enhancements/fix-realnames { "dry_run": false }',
+        apply_with_inblog: 'POST /api/enhancements/fix-realnames { "dry_run": false, "update_inblog": true }',
+        specific_ids: 'POST /api/enhancements/fix-realnames { "dry_run": false, "content_ids": [1, 2, 3] }'
+      }
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
 export { 
   enhancementRoutes, 
   generateFaqSchema, 

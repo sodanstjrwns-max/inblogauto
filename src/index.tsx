@@ -1550,16 +1550,31 @@ function getIndexHtml(): string {
           <div id="retrofit-result" class="text-sm text-gray-500">위 버튼을 눌러 기존 글을 일괄 개선하세요.</div>
         </div>
 
-        <!-- 13. A/B 타이틀 테스팅 -->
+        <!-- 13. 실명 전수 검사 & 익명화 -->
         <div class="card p-6 mt-6">
           <div class="flex items-center justify-between mb-4">
-            <h3 class="font-semibold text-gray-900"><i class="fas fa-flask text-indigo-500 mr-2"></i>13. A/B 타이틀 테스팅</h3>
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-user-shield text-red-500 mr-2"></i>13. 실명 전수 검사 & 익명화</h3>
+            <div class="flex gap-2">
+              <button onclick="scanRealNames()" class="bg-yellow-100 text-yellow-700 px-3 py-1.5 rounded-lg text-xs hover:bg-yellow-200"><i class="fas fa-search mr-1"></i>실명 스캔</button>
+              <button onclick="fixRealNames(true)" class="bg-orange-100 text-orange-700 px-3 py-1.5 rounded-lg text-xs hover:bg-orange-200"><i class="fas fa-eye mr-1"></i>미리보기</button>
+              <button onclick="fixRealNames(false)" class="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-red-700"><i class="fas fa-shield-alt mr-1"></i>익명화 실행</button>
+              <button onclick="fixRealNames(false, true)" class="bg-red-800 text-white px-3 py-1.5 rounded-lg text-xs hover:bg-red-900"><i class="fas fa-sync mr-1"></i>실행+Inblog 동기화</button>
+            </div>
+          </div>
+          <p class="text-xs text-gray-400 mb-3">DB 전체 콘텐츠에서 환자 실명을 탐지하고 "X모 씨"로 익명화합니다. 저자(문석준 원장) 이름은 유지됩니다.</p>
+          <div id="realname-result" class="text-sm text-gray-500">위 버튼을 눌러 실명 여부를 검사하세요. 개인정보보호법 준수를 위해 정기적으로 확인하세요.</div>
+        </div>
+
+        <!-- 14. A/B 타이틀 테스팅 -->
+        <div class="card p-6 mt-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="font-semibold text-gray-900"><i class="fas fa-flask text-indigo-500 mr-2"></i>14. A/B 타이틀 테스팅</h3>
             <button onclick="loadAbTests()" class="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs hover:bg-indigo-200"><i class="fas fa-list mr-1"></i>현황 확인</button>
           </div>
           <div id="ab-test-result" class="text-sm text-gray-500">발행된 글의 제목 A/B 테스트를 실행하여 CTR이 가장 높은 제목을 찾습니다.</div>
         </div>
 
-        <!-- 14. 환자 질문 크롤링 -->
+        <!-- 15. 환자 질문 크롤링 -->
         <div class="card p-6 mt-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="font-semibold text-gray-900"><i class="fas fa-comments text-teal-500 mr-2"></i>14. 환자 질문 크롤링</h3>
@@ -1779,7 +1794,63 @@ function getIndexHtml(): string {
       } catch(e) { el.innerHTML = '<div class="text-red-500">' + e.message + '</div>'; }
     }
 
-    // ===== 개선 13: A/B 타이틀 테스팅 =====
+    // ===== 개선 13: 실명 전수 검사 & 익명화 =====
+    async function scanRealNames() {
+      const el = document.getElementById('realname-result');
+      el.className = 'text-sm p-3 bg-blue-50 rounded-lg'; el.innerHTML = '<div class="spinner"></div> DB 전체 콘텐츠 실명 스캔 중...';
+      try {
+        const res = await api('/enhancements/scan-realnames');
+        if (res.total_realnames_found === 0) {
+          el.className = 'text-sm p-3 bg-green-50 rounded-lg text-green-700';
+          el.innerHTML = '<i class="fas fa-check-circle mr-1"></i>' + res.message + ' (검사: ' + res.total_contents_scanned + '건)';
+        } else {
+          el.className = 'text-sm p-3 bg-red-50 rounded-lg text-red-700';
+          let html = '<i class="fas fa-exclamation-triangle mr-1"></i>' + res.message;
+          html += '<div class="mt-2 space-y-1">';
+          for (const d of res.details) {
+            html += '<div class="bg-white p-2 rounded border border-red-200">';
+            html += '<strong>#' + d.content_id + '</strong> ' + d.keyword + ' — ';
+            html += d.real_names_found.map(n => '<span class="text-red-600 font-bold">' + n.name + '</span> (' + n.context + ')').join(', ');
+            if (d.inblog_url) html += ' <a href="' + d.inblog_url + '" target="_blank" class="text-blue-500 text-xs">🔗</a>';
+            html += '</div>';
+          }
+          html += '</div>';
+          el.innerHTML = html;
+        }
+        showToast(res.message);
+      } catch(e) { el.className = 'text-sm p-3 bg-red-50 rounded-lg text-red-700'; el.innerHTML = e.message; }
+    }
+    
+    async function fixRealNames(dryRun, updateInblog) {
+      const el = document.getElementById('realname-result');
+      if (!dryRun && !confirm('실명을 "X모 씨"로 익명화합니다.' + (updateInblog ? ' Inblog 게시물도 업데이트됩니다.' : '') + '\\n계속하시겠습니까?')) return;
+      el.className = 'text-sm p-3 bg-blue-50 rounded-lg'; el.innerHTML = '<div class="spinner"></div> 실명 익명화 ' + (dryRun ? '미리보기' : '처리') + ' 중...';
+      try {
+        const res = await api('/enhancements/fix-realnames', { 
+          method: 'POST', 
+          body: JSON.stringify({ dry_run: dryRun, update_inblog: !!updateInblog }) 
+        });
+        if (res.total_replacements === 0) {
+          el.className = 'text-sm p-3 bg-green-50 rounded-lg text-green-700';
+          el.innerHTML = '<i class="fas fa-check-circle mr-1"></i>실명이 발견되지 않았습니다. 모든 콘텐츠가 안전합니다.';
+        } else {
+          el.className = 'text-sm p-3 ' + (dryRun ? 'bg-yellow-50 text-yellow-800' : 'bg-green-50 text-green-700') + ' rounded-lg';
+          let html = '<i class="fas fa-' + (dryRun ? 'eye' : 'check-circle') + ' mr-1"></i>' + res.message;
+          html += '<div class="mt-2 space-y-1 max-h-60 overflow-y-auto">';
+          for (const d of res.details) {
+            html += '<div class="bg-white p-2 rounded border ' + (dryRun ? 'border-yellow-200' : 'border-green-200') + '">';
+            html += '<strong>#' + d.content_id + '</strong> ' + d.keyword + ': ';
+            html += d.replacements.map(r => '<del class="text-red-500">' + r.original + '</del> → <span class="text-green-600">' + r.replacement + '</span>').join(', ');
+            html += '</div>';
+          }
+          html += '</div>';
+          el.innerHTML = html;
+        }
+        showToast(res.message);
+      } catch(e) { el.className = 'text-sm p-3 bg-red-50 rounded-lg text-red-700'; el.innerHTML = e.message; }
+    }
+
+    // ===== 개선 14: A/B 타이틀 테스팅 =====
     async function loadAbTests() {
       const el = document.getElementById('ab-test-result');
       el.innerHTML = '<div class="spinner"></div> A/B 테스트 현황 로드 중...';

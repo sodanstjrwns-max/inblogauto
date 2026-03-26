@@ -207,19 +207,21 @@ function getDoctorPerspective(keyword: string, contentId: number): string {
   return DOCTOR_PERSPECTIVES[(hash + contentId) % DOCTOR_PERSPECTIVES.length]
 }
 
-// ===== Claude 시스템 프롬프트 (v5.1 — 절대 스팸 불가 리빌드) =====
+// ===== Claude 시스템 프롬프트 (v6.0 — 다양성 강화 + 품질 검증 내장) =====
 function buildSystemPrompt(keyword: string, contentType: ContentType, typeGuide: string, patientQuestion: string, disclaimer: string, emotion?: string, structureOverride?: string): string {
-  // 구조 다양화: 키워드 해시 기반으로 6가지 구조 중 하나 선택
+  // 구조 다양화: 키워드 해시 + 현재 시간(분) 기반 → 같은 키워드도 시간에 따라 다른 구조
   const kwHash = keyword.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
-  const structure = ARTICLE_STRUCTURES[kwHash % ARTICLE_STRUCTURES.length]
+  const timeSeed = Math.floor(Date.now() / 60000) // 분 단위 시드
+  const diversitySeed = kwHash + timeSeed
+  const structure = ARTICLE_STRUCTURES[diversitySeed % ARTICLE_STRUCTURES.length]
   const experienceMarkers = getExperienceMarkers(keyword, 4)
-  // H2 개수 변동: 5~8개 (매번 같은 개수 방지)
-  const h2Count = 5 + (kwHash % 4) // 5, 6, 7, 8 중 하나
-  // 도입부 첫 문장 패턴
-  const opening = OPENING_PATTERNS[kwHash % OPENING_PATTERNS.length]
-  // 원장 관점 문장 (2개 선택 → 맥락에 따라 1~2개 삽입)
-  const doctorView1 = DOCTOR_PERSPECTIVES[kwHash % DOCTOR_PERSPECTIVES.length]
-  const doctorView2 = DOCTOR_PERSPECTIVES[(kwHash + 3) % DOCTOR_PERSPECTIVES.length]
+  // H2 개수 변동: 5~8개 (매번 다르게)
+  const h2Count = 5 + (diversitySeed % 4) // 5, 6, 7, 8 중 하나
+  // 도입부 첫 문장 패턴 (시간 시드 추가로 다양화)
+  const opening = OPENING_PATTERNS[diversitySeed % OPENING_PATTERNS.length]
+  // 원장 관점 문장 (2개 선택 — 시간 기반 다양화)
+  const doctorView1 = DOCTOR_PERSPECTIVES[diversitySeed % DOCTOR_PERSPECTIVES.length]
+  const doctorView2 = DOCTOR_PERSPECTIVES[(diversitySeed + 5) % DOCTOR_PERSPECTIVES.length]
 
   return `역할: 통합치의학과 전문의의 시선으로 환자의 불안을 정보로 바꾸는 블로그 글 작성자
 목적: 치과 치료 때문에 걱정되는 환자가 이 글을 읽고 "아, 이 정도면 괜찮겠다"고 느끼도록 하는 것
@@ -440,7 +442,16 @@ ${opening.guide}
 12. 마무리 <p>: 핵심 요약 + 임파워먼트 (병원 예약 유도 금지)
 13. 면책: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>
 
-## content_html에 JSON-LD, <script> 태그 절대 포함하지 마세요.`
+## content_html에 JSON-LD, <script> 태그 절대 포함하지 마세요.
+
+## ⚠️ 반복 방지 최종 체크 (v6.0 추가)
+글 작성 후 반드시 스스로 체크하세요:
+1. "~입니다" 어미가 3문장 연속으로 나오지 않는가?
+2. 같은 H2 섹션 내에서 같은 단어가 3회 이상 반복되지 않는가?
+3. 각 H2 섹션의 첫 문장이 모두 다른 패턴으로 시작하는가?
+4. FAQ의 답변이 모두 다른 어미로 끝나는가?
+5. 본문에 "중요합니다", "필요합니다", "좋습니다"가 총 5회 이상 나오지 않는가?
+위 체크에 걸리면 해당 부분을 수정한 후 출력하세요.`
 }
 
 // GET /api/contents - 콘텐츠 목록 조회

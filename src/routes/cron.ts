@@ -574,43 +574,113 @@ cronApp.post('/generate', async (c) => {
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
+      // === 0.1단계: 콘텐츠 품질 검증 & 자동 교정 (v6.0) ===
+      {
+        const html = bestContent.content_html || ''
+        const plain = html.replace(/<[^>]*>/g, '')
+        const h2Count = (html.match(/<h2[^>]*>/gi) || []).length
+        const faqCount = (bestContent.faq || []).length
+        const qualityIssues: string[] = []
+
+        // 1) 최소 길이 검증 (3000자 미만이면 경고)
+        if (plain.length < 2500) {
+          qualityIssues.push(`본문 ${plain.length}자 — 최소 3000자 권장`)
+        }
+
+        // 2) H2 개수 검증 (5~8개 범위)
+        if (h2Count < 4) {
+          qualityIssues.push(`H2 ${h2Count}개 — 최소 5개 필요`)
+        }
+
+        // 3) FAQ 검증 (5~7개)
+        if (faqCount < 3) {
+          qualityIssues.push(`FAQ ${faqCount}개 — 최소 5개 필요`)
+        }
+
+        // 4) 반복 문장 패턴 감지 & 자동 교정
+        let fixedHtml = html
+        // "~입니다." 4회 이상 연속 시 일부를 다양한 어미로 교체
+        const endingPattern = /(입니다\.\s*<)/g
+        const endings = ['이죠.</','편입니다.</','거든요.</','인 셈이죠.</']
+        let endingCount = 0
+        fixedHtml = fixedHtml.replace(endingPattern, (match) => {
+          endingCount++
+          if (endingCount % 4 === 0) {
+            return endings[endingCount % endings.length]
+          }
+          return match
+        })
+
+        // 5) 빈 H2 섹션 감지 (H2 바로 다음에 또 H2가 오는 경우)
+        fixedHtml = fixedHtml.replace(/<\/h2>\s*<h2/gi, '</h2>\n<p>이 부분은 개인의 구강 상태에 따라 달라질 수 있습니다. 전문의와 상담을 통해 본인에게 맞는 방법을 확인해보세요.</p>\n<h2')
+
+        // 6) 비용 금지어 최종 점검
+        const COST_WORDS_STRICT = /만\s*원|가격|비용|보험\s*적용|실비|급여|비급여|건강보험|할부|할인|수가|본인부담|의료비|치료비/g
+        const costMatches = plain.match(COST_WORDS_STRICT)
+        if (costMatches) {
+          qualityIssues.push(`비용 금지어 ${costMatches.length}개 감지: ${costMatches.slice(0, 3).join(', ')}`)
+          // FAQ에서 비용 관련 항목 제거
+          if (bestContent.faq) {
+            bestContent.faq = bestContent.faq.filter((f: any) => 
+              !COST_WORDS_STRICT.test(f.q + f.a)
+            )
+          }
+        }
+
+        if (qualityIssues.length > 0) {
+          console.warn(`[품질검증] ${kw.keyword}: ${qualityIssues.join(' | ')}`)
+        }
+        bestContent.content_html = fixedHtml
+        bestContent.quality_issues = qualityIssues
+      }
+
       // === 0.3단계: 실명(본명) 후처리 필터 — 환자 실명만 "모 씨"로 자동 치환 ===
       // ※ 저자(문석준 원장) 이름은 치환하지 않음!
-      // ※ 호칭(씨/님/환자) 붙은 경우만 매칭 — 조사 패턴은 오탐이 심해 제외
+      // ※ 호칭(씨/님)만 매칭 — "환자"는 오탐("고혈압 환자","오시는 환자" 등)이 심해 제외
       {
         let html = bestContent.content_html || ''
-        const COMMON_SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배조백허노남심하주우곽성차유구연'
-        // 오탐 방지: 일반 단어/의학용어/지명 skipList (성+이름2글자 조합)
-        const SKIP_WORDS = new Set([
-          '안전', '안정', '안내', '안과', '안심', '안면',
-          '전문', '전체', '전혀', '전후', '전달', '전날',
-          '정상', '정확', '정도', '정보', '정기', '정말',
-          '주의', '주변', '주치', '주기', '주요',
-          '이식', '이상', '이후', '이전', '이물',
-          '신경', '신장', '신체', '신질', '신거',
-          '임상', '임시', '임플', '한번', '한편', '한쪽', '한국', '한약', '한치', '한마', '한밤',
-          '최고', '최선', '최대', '최소', '최근', '최초', '최신',
-          '강력', '강한', '강도', '강해', '강요',
-          '조금', '조건', '조직', '조기', '유지', '유의', '유형', '유발', '유치',
-          '문의', '문제', '배치', '배열', '남은', '남자', '남녀', '남성',
-          '허용', '허리', '심한', '심각', '심리', '심미', '심해',
-          '노출', '노력', '노화', '노인', '하지', '하루', '하나',
-          '공간', '공급', '공포', '공유', '민감',
-          '진행', '진단', '진료', '진통', '진정',
-          '마취', '마감', '마찬', '마무', '어금', '어디', '어르',
-          '방법', '방치', '방해', '방지', '차이', '차단', '차지',
-          '권장', '권고', '장단', '장기', '오히', '오스', '오래',
-          '서산', '홍성', '논산', '강릉', '김포', '김해', '안양', '안산', '공주', '전주', '문경',
+        const SURNAMES = '김이박최정강조윤장임한오서신권황안송전홍유고문양손배조백허노남심하주우곽성차유구연'
+        // 오탐 방지: 일반 단어/의학용어/지명/동사형 skipList
+        const SKIP = new Set([
+          '안전','안정','안내','안과','안심','안면','안쪽','안되',
+          '전문','전체','전혀','전후','전달','전날','전반','전신',
+          '정상','정확','정도','정보','정기','정말','정밀','정리','정에서',
+          '주의','주변','주치','주기','주요','주로','주사',
+          '이식','이상','이후','이전','이물','이때','이런','이유',
+          '신경','신장','신체','신질','신거','신속','신뢰',
+          '임상','임시','임플','임신',
+          '한번','한편','한쪽','한국','한약','한치','한마','한밤','한동',
+          '최고','최선','최대','최소','최근','최초','최신','최적',
+          '강력','강한','강도','강해','강요','강화',
+          '조금','조건','조직','조기','조절',
+          '유지','유의','유형','유발','유치','유리','유사',
+          '문의','문제','문헌','배치','배열','배출',
+          '남은','남자','남녀','남성',
+          '허용','허리','심한','심각','심리','심미','심해','심장',
+          '노출','노력','노화','노인','하지','하루','하나','하시','하셔','하였',
+          '오시','오래','오히','오스','오해',
+          '공간','공급','공포','공유',
+          '진행','진단','진료','진통','진정','진짜',
+          '마취','마감','마찬','마무','마지',
+          '어금','어디','어르','어느',
+          '방법','방치','방해','방지','방문',
+          '차이','차단','차지','차원',
+          '권장','권고','장단','장기','장치','장착','민감',
+          '고혈압','구내염','성장기','성공률','전신질','전신마','전신건',
+          '임플란','임플렌','임산부','유치원','유지보','배농술',
+          '서산','홍성','논산','강릉','김포','김해','안양','안산','공주','전주','문경',
+          '대전','세종','청주','천안','아산','당진','보령','제천','충주','예산','음성',
         ])
         let nameReplaced = 0
 
-        // 성(1글자) + 이름(2글자) + 호칭 패턴만 매칭
-        const namePattern = new RegExp(`([${COMMON_SURNAMES}])([가-힣]{2})\\s*(씨|님|환자|환자분)`, 'g')
-        html = html.replace(namePattern, (match, surname, name, suffix) => {
+        // 성(1글자) + 이름(2글자) + 호칭(씨/님)만 매칭
+        const namePattern = new RegExp(`([${SURNAMES}])([가-힣]{2})(\\s*)(씨|님)`, 'g')
+        html = html.replace(namePattern, (match, surname, name, space, suffix) => {
           const fullName = surname + name
-          if (SKIP_WORDS.has(fullName)) return match
-          // 이미 "X모" 형태면 건드리지 않음
-          if (name === '모 ' || name.startsWith('모')) return match
+          if (SKIP.has(fullName)) return match
+          if (SKIP.has(name)) return match  // 이름부분이 동사형 등
+          if (name.endsWith('모')) return match  // 이미 "X모" 형태
+          if (fullName === '문석준') return match  // 저자 이름
           nameReplaced++
           return `${surname}모 씨`
         })
@@ -654,10 +724,14 @@ cronApp.post('/generate', async (c) => {
       const contentId = insertResult.meta.last_row_id as number
 
       // === 2단계: AI 이미지 생성 (썸네일 + 본문 이미지) ===
+      // ★ v6.0: 이미지 생성은 전체 타임아웃 가드 적용 — 실패해도 콘텐츠는 무조건 성공
       let thumbnailUrl = ''
+      const imgTimeoutMs = 90000 // 이미지 전체 프로세스 최대 90초
+      const imgStartTime = Date.now()
       
       // 2-A: 썸네일 (1200×630, OG 이미지용)
       try {
+        if (Date.now() - imgStartTime > imgTimeoutMs) throw new Error('이미지 타임아웃 가드')
         const thumbResult = await generateAIImage(
           c.env, kw.keyword, kw.category || 'general', 'thumbnail', classified.type, contentId
         )
@@ -682,7 +756,12 @@ cronApp.post('/generate', async (c) => {
       }
       
       // 최대 2장까지 본문 이미지 생성 (Workers 타임아웃 대응)
-      const maxBodyImages = Math.min(imageSlots.length, 2)
+      // ★ v6.0: 남은 시간이 부족하면 본문 이미지 스킵
+      const imgElapsed = Date.now() - imgStartTime
+      const maxBodyImages = imgElapsed > 60000 ? 0 : Math.min(imageSlots.length, 2)
+      if (maxBodyImages === 0 && imageSlots.length > 0) {
+        console.warn(`[본문이미지] 시간 초과(${Math.round(imgElapsed/1000)}s) → 본문 이미지 스킵`)
+      }
       for (let imgIdx = 0; imgIdx < maxBodyImages; imgIdx++) {
         const slot = imageSlots[imgIdx]
         try {
@@ -1309,14 +1388,30 @@ ${internalLinksBlock}
   throw new Error(`모든 Claude 모델 실패: ${lastError}`)
 }
 
-// ===== POST /api/cron/publish-next — draft 1개를 인블로그에 발행 (가벼운 API, 크론용) =====
+// ===== POST /api/cron/publish-next — draft 1개를 인블로그에 발행 (v6.0 — 안정화 강화) =====
 cronApp.post('/publish-next', async (c) => {
+  const startTime = Date.now()
   try {
     // draft 잔여량 확인
     const draftCountRow = await c.env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM contents WHERE status = 'draft'"
     ).first()
     const draftCount = (draftCountRow?.cnt as number) || 0
+
+    // ★ v6.0: 오늘 이미 발행된 수 체크 (중복 발행 방지 — 이중 안전장치)
+    const todayPublishedRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'published' AND updated_at > datetime('now', '-1 day')"
+    ).first()
+    const todayPublished = (todayPublishedRow?.cnt as number) || 0
+    if (todayPublished >= 5) {
+      console.log(`[publish-next] 오늘 이미 ${todayPublished}건 발행 → 스킵 (최대 5건/일)`)
+      return c.json({
+        published: false,
+        message: `오늘 이미 ${todayPublished}건 발행 완료 (최대 5건/일)`,
+        drafts_remaining: draftCount,
+        today_published: todayPublished
+      })
+    }
 
     // 가장 오래된 draft 1개 가져오기
     const draft = await c.env.DB.prepare(
@@ -1336,6 +1431,17 @@ cronApp.post('/publish-next', async (c) => {
       })
     }
 
+    // ★ v6.0: slug 중복 체크 (같은 slug로 이미 발행된 글이 있으면 slug 변경)
+    const existingSlug = await c.env.DB.prepare(
+      "SELECT id FROM publish_logs WHERE inblog_url LIKE ? AND status = 'published'"
+    ).bind(`%/${draft.slug}`).first()
+    if (existingSlug) {
+      const uniqueSuffix = `-${Date.now().toString(36).slice(-4)}`
+      draft.slug = draft.slug + uniqueSuffix
+      await c.env.DB.prepare("UPDATE contents SET slug = ? WHERE id = ?").bind(draft.slug, draft.id).run()
+      console.warn(`[publish-next] slug 중복 감지 → ${draft.slug} 로 변경`)
+    }
+
     // API 키 확인
     const inblogKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'inblog_api_key'").first()
     const inblogApiKey = inblogKeyRow?.value as string || ''
@@ -1349,7 +1455,7 @@ cronApp.post('/publish-next', async (c) => {
       return c.json({ error: 'Invalid inblog API key', published: false }, 500)
     }
 
-    // 태그 동기화
+    // 태그 동기화 (★ v6.0: 태그 실패해도 발행 진행)
     let tagIds: string[] = []
     try {
       const tags = draft.tags ? JSON.parse(draft.tags) : []
@@ -1357,12 +1463,17 @@ cronApp.post('/publish-next', async (c) => {
         const syncedTags = await syncTags(inblogApiKey, tags)
         tagIds = syncedTags.map((t: any) => t.id)
       }
-    } catch (e) {
-      console.warn('[publish-next] 태그 파싱/동기화 실패:', e)
+    } catch (e: any) {
+      console.warn('[publish-next] 태그 파싱/동기화 실패 (무시하고 진행):', e.message)
     }
 
-    // 작성자 ID
-    const authorId = await getAuthorId(inblogApiKey)
+    // 작성자 ID (★ v6.0: 실패해도 null로 진행)
+    let authorId: string | null = null
+    try {
+      authorId = await getAuthorId(inblogApiKey)
+    } catch (e: any) {
+      console.warn('[publish-next] 작성자 ID 조회 실패 (null로 진행):', e.message)
+    }
 
     // 인블로그에 포스트 생성
     const createResult = await createInblogPost(inblogApiKey, {
@@ -1391,13 +1502,14 @@ cronApp.post('/publish-next', async (c) => {
        VALUES (?, ?, ?, 'published', datetime('now'), datetime('now'))`
     ).bind(draft.id, inblogPostId, inblogUrl).run()
 
-    // 검색엔진 색인 요청
+    // 검색엔진 색인 요청 (★ v6.0: 비동기, 실패 무시)
     try {
       await requestSearchEngineIndexing(inblogUrl, c.env.DB)
     } catch (e) {}
 
     const draftsRemaining = draftCount - 1
-    console.log(`[publish-next] ✅ 발행 완료: "${draft.title}" → ${inblogUrl} (남은 draft: ${draftsRemaining})`)
+    const elapsed = Date.now() - startTime
+    console.log(`[publish-next] ✅ 발행 완료 (${elapsed}ms): "${draft.title}" → ${inblogUrl} (남은 draft: ${draftsRemaining})`)
 
     return c.json({
       published: true,
@@ -1408,11 +1520,38 @@ cronApp.post('/publish-next', async (c) => {
       inblog_post_id: inblogPostId,
       tags_synced: tagIds.length,
       drafts_remaining: draftsRemaining,
-      needs_replenish: draftsRemaining < 3
+      needs_replenish: draftsRemaining < 3,
+      today_published: todayPublished + 1,
+      elapsed_ms: elapsed
     })
   } catch (err: any) {
-    console.error('[publish-next] 발행 실패:', err.message)
-    return c.json({ error: err.message, published: false }, 500)
+    const elapsed = Date.now() - startTime
+    console.error(`[publish-next] 발행 실패 (${elapsed}ms):`, err.message)
+    // ★ v6.0: 실패한 draft를 error 상태로 마킹 (무한 재시도 방지)
+    try {
+      const failedDraft = await c.env.DB.prepare(
+        "SELECT id FROM contents WHERE status = 'draft' ORDER BY created_at ASC LIMIT 1"
+      ).first()
+      if (failedDraft) {
+        await c.env.DB.prepare(
+          `INSERT INTO publish_logs (content_id, status, error_message, scheduled_at)
+           VALUES (?, 'failed', ?, datetime('now'))`
+        ).bind(failedDraft.id, err.message.substring(0, 500)).run()
+        // 3회 이상 실패 시 draft → failed 상태 변경
+        const failCount = await c.env.DB.prepare(
+          "SELECT COUNT(*) as cnt FROM publish_logs WHERE content_id = ? AND status = 'failed'"
+        ).bind(failedDraft.id).first()
+        if ((failCount?.cnt as number) >= 3) {
+          await c.env.DB.prepare(
+            "UPDATE contents SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
+          ).bind(failedDraft.id).run()
+          console.error(`[publish-next] Draft #${failedDraft.id} 3회 실패 → failed 상태 전환`)
+        }
+      }
+    } catch (logErr: any) {
+      console.error('[publish-next] 실패 로깅 중 오류:', logErr.message)
+    }
+    return c.json({ error: err.message, published: false, elapsed_ms: elapsed }, 500)
   }
 })
 
