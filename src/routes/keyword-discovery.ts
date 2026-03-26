@@ -57,7 +57,7 @@ function isQualityKeyword(keyword: string): boolean {
   return true
 }
 
-// ===== 5. 키워드 자동 분류 =====
+// ===== 5. 키워드 자동 분류 (v7.3+ 치과 전 진료 영역) =====
 function classifyKeyword(keyword: string): { 
   category: string
   subcategory: string 
@@ -71,61 +71,191 @@ function classifyKeyword(keyword: string): {
   let search_intent = 'info'
   let priority = 70
 
-  // implant
+  // ── 1. 임플란트 ──
   if (/임플란트|뼈이식|상악동|골이식|픽스처|어버트먼트/.test(kw)) {
     category = 'implant'
-    if (/후.*회복|통증|붓기|출혈|음식|운동|담배|술|관리/.test(kw)) { subcategory = '회복'; priority = 80 }
-    else if (/과정|시간|방법|마취|절개|수술|단계/.test(kw)) { subcategory = '과정'; priority = 80 }
-    else if (/실패|위험|부작용|흔들|주위염|냄새|염증/.test(kw)) { subcategory = '문제'; priority = 85 }
-    else if (/vs|비교|차이|뭐가/.test(kw)) { subcategory = '비교'; search_intent = 'comparison'; priority = 80 }
-    else if (/수명|관리|칫솔|정기/.test(kw)) { subcategory = '관리'; priority = 75 }
-    else if (/무섭|아프|두렵|공포|겁/.test(kw)) { subcategory = '불안'; priority = 80 }
-    else if (/당뇨|고혈압|골다공증|임산부|흡연|고령/.test(kw)) { subcategory = '특수'; priority = 80 }
-    else if (/적응증|필요|해야|대상/.test(kw)) { subcategory = '적응증'; priority = 80 }
-    else { subcategory = '일반'; priority = 75 }
+    if (/후.*회복|통증|붓기|출혈|음식|운동|담배|술/.test(kw)) { subcategory = '임플란트_회복'; priority = 80 }
+    else if (/과정|시간|방법|마취|절개|수술|단계/.test(kw)) { subcategory = '임플란트_과정'; priority = 80 }
+    else if (/실패|위험|부작용|흔들|주위염|냄새|염증|나사/.test(kw)) { subcategory = '임플란트_문제'; priority = 85 }
+    else if (/vs|비교|차이|뭐가/.test(kw)) { subcategory = '임플란트_비교'; search_intent = 'comparison'; priority = 80 }
+    else if (/수명|관리|칫솔|정기/.test(kw)) { subcategory = '임플란트_관리'; priority = 75 }
+    else if (/무섭|아프|두렵|공포|겁/.test(kw)) { subcategory = '임플란트_불안'; priority = 80 }
+    else if (/당뇨|고혈압|골다공증|임산부|흡연|고령/.test(kw)) { subcategory = '임플란트_특수'; priority = 80 }
+    else if (/적응증|필요|해야|대상|꼭|안\s*하면/.test(kw)) { subcategory = '임플란트_적응증'; priority = 80 }
+    else { subcategory = '임플란트_일반'; priority = 75 }
   }
-  // ★ v7.2: 라미네이트/미백은 general(심미 보철)로 분리, 교정은 순수 교정만
-  // cosmetic (라미네이트, 미백 → general 카테고리 내 심미 서브카테고리)
-  else if (/라미네이트|미백|하얗|누런|본딩|치아\s*성형/.test(kw)) {
-    category = 'general'
-    subcategory = '심미'
-    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 80 }
-    else if (/과정|방법|단계/.test(kw)) { priority = 80 }
-    else if (/부작용|시림|통증/.test(kw)) { priority = 85 }
-    else if (/관리|주의|수명/.test(kw)) { priority = 75 }
-    else { priority = 75 }
+  // ── 2. 레진치료 (충치 레진 치료) ──
+  else if (/레진(?!.*인레이)|본딩\s*치료/.test(kw) && !/인레이|온레이/.test(kw)) {
+    category = 'general'; subcategory = '레진치료'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+    else if (/부작용|변색|떨어|탈락/.test(kw)) priority = 85
   }
-  // orthodontics (순수 교정만)
-  else if (/교정|투명교정|인비절라인|설측|세라믹교정|돌출입|덧니|벌어짐|주걱|부정교합/.test(kw)) {
+  // ── 3. 인비절라인/투명교정 (교정과 분리) ──
+  else if (/인비절라인|투명교정|투명\s*교정/.test(kw)) {
+    category = 'orthodontics'; subcategory = '인비절라인'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+    else if (/기간|과정|단계/.test(kw)) priority = 80
+    else if (/부작용|통증|실패/.test(kw)) priority = 85
+  }
+  // ── 4. 부분교정 ──
+  else if (/부분\s*교정|앞니\s*교정/.test(kw)) {
+    category = 'orthodontics'; subcategory = '부분교정'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+  }
+  // ── 5. 설측교정 ──
+  else if (/설측/.test(kw)) {
+    category = 'orthodontics'; subcategory = '설측교정'; priority = 80
+  }
+  // ── 6. 전체/일반 교정 ──
+  else if (/교정|세라믹교정|돌출입|덧니|벌어짐|주걱|부정교합/.test(kw)) {
     category = 'orthodontics'
-    if (/vs|비교|차이/.test(kw)) { subcategory = '비교'; search_intent = 'comparison'; priority = 80 }
-    else if (/아이|소아|초등|유치|몇살|어린이/.test(kw)) { subcategory = '소아'; priority = 80 }
-    else if (/기간|과정|방법|단계/.test(kw)) { subcategory = '과정'; priority = 80 }
-    else if (/통증|아프|부작용/.test(kw)) { subcategory = '부작용'; priority = 80 }
-    else if (/관리|음식|양치|유지/.test(kw)) { subcategory = '관리'; priority = 75 }
-    else { subcategory = '일반'; priority = 75 }
+    if (/전체|전악/.test(kw)) { subcategory = '전체교정'; priority = 80 }
+    else if (/vs|비교|차이/.test(kw)) { subcategory = '교정_비교'; search_intent = 'comparison'; priority = 80 }
+    else if (/아이|소아|초등|유치|몇살|어린이/.test(kw)) { subcategory = '소아교정'; priority = 80 }
+    else if (/기간|과정|방법|단계/.test(kw)) { subcategory = '교정_과정'; priority = 80 }
+    else if (/통증|아프|부작용/.test(kw)) { subcategory = '교정_부작용'; priority = 80 }
+    else if (/관리|음식|양치|유지|고무줄/.test(kw)) { subcategory = '교정_관리'; priority = 75 }
+    else if (/돌출입|주걱|덧니/.test(kw)) { subcategory = '전체교정'; priority = 85 }
+    else { subcategory = '교정_일반'; priority = 75 }
   }
-  // prevention
-  else if (/칫솔|치실|치간|스케일링|불소|실란트|예방|구강위생|검진|워터픽|전동칫솔/.test(kw)) {
-    category = 'prevention'
-    if (/스케일링/.test(kw)) { subcategory = '스케일링'; priority = 80 }
-    else if (/아이|소아|유치|몇살|어린이/.test(kw)) { subcategory = '소아'; priority = 75 }
-    else { subcategory = '예방'; priority = 70 }
+  // ── 7. 라미네이트 ──
+  else if (/라미네이트/.test(kw)) {
+    category = 'general'; subcategory = '라미네이트'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+    else if (/부작용|시림|통증/.test(kw)) priority = 85
+    else if (/관리|주의|수명/.test(kw)) priority = 75
   }
-  // general 세분화
+  // ── 8. 미백/심미 ──
+  else if (/미백|하얗|누런|치아\s*성형|착색|잇몸\s*미백|잇몸\s*성형|잇몸\s*라인|스마일\s*라인|잇몸\s*색/.test(kw)) {
+    category = 'general'; subcategory = '미백_심미'; priority = 78
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 80 }
+    else if (/부작용|시림|통증/.test(kw)) priority = 85
+    else if (/잇몸\s*성형|잇몸\s*라인|스마일/.test(kw)) { subcategory = '잇몸성형'; priority = 80 }
+  }
+  // ── 9. 재신경치료/치근단절제술 ──
+  else if (/재신경|치근단|치근\s*단/.test(kw)) {
+    category = 'general'; subcategory = '재신경치료'; priority = 85
+    if (/절제술/.test(kw)) subcategory = '치근단절제술'
+    if (/vs|비교|차이/.test(kw)) search_intent = 'comparison'
+  }
+  // ── 10. 신경치료 ──
+  else if (/신경치료|신경\s*치료/.test(kw)) {
+    category = 'general'; subcategory = '신경치료'; priority = 80
+    if (/실패|재/.test(kw)) { subcategory = '재신경치료'; priority = 85 }
+    else if (/후.*통증|안\s*하면/.test(kw)) priority = 85
+  }
+  // ── 11. 사랑니/발치/매복 ──
+  else if (/사랑니|매복/.test(kw)) {
+    category = 'general'; subcategory = '사랑니'; priority = 85
+    if (/매복/.test(kw)) subcategory = '매복사랑니'
+    if (/후.*회복|통증|붓기|음식/.test(kw)) priority = 85
+  }
+  else if (/발치/.test(kw)) {
+    category = 'general'; subcategory = '발치'; priority = 80
+    if (/후.*회복|통증|출혈/.test(kw)) priority = 85
+  }
+  // ── 12. 크라운/지르코니아 ──
+  else if (/크라운|지르코니아|PFM|올세라믹/.test(kw)) {
+    category = 'general'; subcategory = '크라운'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+    else if (/탈락|떨어|아래.*충치/.test(kw)) priority = 85
+    else if (/임시/.test(kw)) subcategory = '임시치아'
+  }
+  // ── 13. 인레이/온레이 ──
+  else if (/인레이|온레이/.test(kw)) {
+    category = 'general'; subcategory = '인레이'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+  }
+  // ── 14. 턱관절/이갈이 ──
+  else if (/턱관절|이갈이|악관절|이\s*악물|턱\s*통증|턱\s*소리/.test(kw)) {
+    category = 'general'; subcategory = '턱관절'; priority = 80
+    if (/이갈이/.test(kw)) subcategory = '이갈이'
+  }
+  // ── 15. 잇몸/치주 ──
+  else if (/잇몸|치주|치은|치석|치조골/.test(kw)) {
+    category = 'general'
+    if (/수술|이식|재생|스플린트/.test(kw)) { subcategory = '치주수술'; priority = 85 }
+    else if (/퇴축|내려|올라/.test(kw)) { subcategory = '잇몸퇴축'; priority = 80 }
+    else if (/고름|농양|부음|부었/.test(kw)) { subcategory = '잇몸응급'; priority = 85 }
+    else { subcategory = '잇몸'; priority = 80 }
+  }
+  // ── 16. 충치/보존치료 ──
+  else if (/충치|이차\s*충치|균열\s*증후군|치아\s*균열|마모|침식|쐐기|치경부|재석회화/.test(kw)) {
+    category = 'general'
+    if (/이차|재발|다시/.test(kw)) { subcategory = '이차충치'; priority = 85 }
+    else if (/균열|금/.test(kw)) { subcategory = '치아균열'; priority = 85 }
+    else if (/마모|침식|쐐기|치경부/.test(kw)) { subcategory = '치아마모'; priority = 78 }
+    else { subcategory = '충치'; priority = 80 }
+  }
+  // ── 17. 틀니 ──
+  else if (/틀니|의치|오버덴처/.test(kw)) {
+    category = 'general'; subcategory = '틀니'; priority = 80
+  }
+  // ── 18. 브릿지 ──
+  else if (/브릿지/.test(kw)) {
+    category = 'general'; subcategory = '브릿지'; priority = 80
+    if (/vs|비교|차이/.test(kw)) { search_intent = 'comparison'; priority = 85 }
+  }
+  // ── 19. 보철 총론 ──
+  else if (/보철/.test(kw)) {
+    category = 'general'; subcategory = '보철'; priority = 78
+    if (/vs|비교|차이|종류/.test(kw)) { search_intent = 'comparison'; priority = 80 }
+  }
+  // ── 20. 소아치과 ──
+  else if (/소아|유치|어린이\s*치과|아이\s*치과|아이\s*충치|아이\s*칫솔|아이\s*이갈이|아이\s*교정|아이\s*구내염|영구치/.test(kw)) {
+    category = 'general'; subcategory = '소아치과'; priority = 80
+    if (/수면|마취/.test(kw)) { subcategory = '소아수면치료'; priority = 85 }
+    else if (/교정/.test(kw)) { subcategory = '소아교정'; priority = 80 }
+  }
+  // ── 21. 마취/수면치료 ──
+  else if (/마취|수면마취|수면치료|웃음가스|진정치료/.test(kw)) {
+    category = 'general'; subcategory = '마취_수면'; priority = 78
+    if (/웃음가스/.test(kw)) subcategory = '웃음가스'
+    if (/위험|부작용|안전/.test(kw)) priority = 85
+  }
+  // ── 22. 구강외과/외상 ──
+  else if (/부러졌|빠졌|금\s*갔|파절|탈구|낭종|구강암|턱뼈\s*골절|치아\s*외상/.test(kw)) {
+    category = 'general'; subcategory = '구강외과'; priority = 85
+  }
+  // ── 23. 구취/입냄새 ──
+  else if (/구취|입냄새|혀\s*세정/.test(kw)) {
+    category = 'general'; subcategory = '구취'; priority = 78
+  }
+  // ── 24. 구강건조 ──
+  else if (/구강\s*건조|침\s*분비/.test(kw)) {
+    category = 'general'; subcategory = '구강건조'; priority = 78
+  }
+  // ── 25. 구강점막/혀 ──
+  else if (/구내염|혀\s*통증|혀\s*궤양|입천장|구강\s*점막/.test(kw)) {
+    category = 'general'; subcategory = '구강점막'; priority = 78
+  }
+  // ── 26. 스케일링 ──
+  else if (/스케일링/.test(kw)) {
+    category = 'prevention'; subcategory = '스케일링'; priority = 80
+  }
+  // ── 27. 예방/위생 ──
+  else if (/칫솔|치실|치간|불소|실란트|예방|구강위생|검진|워터픽|전동칫솔/.test(kw)) {
+    category = 'prevention'; subcategory = '예방'; priority = 70
+  }
+  // ── 28. 시린이 ──
+  else if (/시린이|시림|시린\s*이/.test(kw)) {
+    category = 'general'; subcategory = '시린이'; priority = 80
+  }
+  // ── 29. 디지털치과/최신기술 ──
+  else if (/3D|스캐너|CAD|CBCT|네비게이션|레이저|미세현미경|로봇|디지털\s*치과/.test(kw)) {
+    category = 'general'; subcategory = '디지털치과'; priority = 75
+  }
+  // ── 30. 응급/치통 ──
+  else if (/통증|응급|아프|치통/.test(kw)) {
+    category = 'general'; subcategory = '응급'; priority = 85
+  }
+  // ── 31. 특수환자 ──
+  else if (/임산부|당뇨|고혈압|골다공증|항암|방사선|혈액희석제/.test(kw)) {
+    category = 'general'; subcategory = '특수환자'; priority = 80
+  }
+  // ── fallback ──
   else {
-    if (/충치/.test(kw)) { subcategory = '충치'; priority = 80 }
-    else if (/신경치료|신경/.test(kw)) { subcategory = '신경치료'; priority = 80 }
-    else if (/사랑니|발치/.test(kw)) { subcategory = '발치'; priority = 85 }
-    else if (/잇몸|치주|치은|치석/.test(kw)) { subcategory = '잇몸'; priority = 80 }
-    else if (/크라운|보철|인레이|온레이/.test(kw)) { subcategory = '보철'; priority = 80 }
-    else if (/통증|응급|아프|부러|빠졌|치통/.test(kw)) { subcategory = '응급'; priority = 85 }
-    else if (/턱관절|이갈이|악관절|이\s*악물/.test(kw)) { subcategory = '턱관절'; priority = 80 }
-    else if (/틀니|의치|오버덴처/.test(kw)) { subcategory = '틀니'; priority = 80 }
-    else if (/브릿지/.test(kw)) { subcategory = '브릿지'; priority = 80 }
-    else if (/마취|수면/.test(kw)) { subcategory = '마취'; priority = 75 }
-    else if (/시린이|시림/.test(kw)) { subcategory = '시린이'; priority = 80 }
-    else { subcategory = '기타'; priority = 65 }
+    subcategory = '기타'; priority = 65
   }
   
   // 검색 의도 보정
@@ -568,6 +698,254 @@ function getCuratedKeywords(): string[] {
     '코골이 치과 치료',
     '치아 외상 후 변색',
     '치아 교정 중 임신',
+
+    // ===== ★ v7.3+ 레진치료 (20개) =====
+    '레진 치료 과정',
+    '레진 치료 후 통증',
+    '레진 치료 수명',
+    '레진 충치 치료 과정',
+    '레진 떨어졌을 때 대처법',
+    '레진 변색 원인',
+    '레진 vs 아말감 차이',
+    '레진 vs 세라믹 차이',
+    '앞니 레진 치료 후기',
+    '앞니 레진 수명',
+    '벌어진 앞니 레진 치료',
+    '레진 치료 후 시림',
+    '레진 치료 마취 안 하면',
+    '레진 치료 몇 번 가야 하나요',
+    '레진 색상 맞추기',
+    '레진 치료 다시 해야 하는 시기',
+    '레진 크라운 차이',
+    '레진 인레이 차이',
+    '이가 깨졌을 때 레진으로 가능한가요',
+    '레진 본딩 과정',
+
+    // ===== ★ v7.3+ 인비절라인/투명교정 (20개) =====
+    '인비절라인 과정 단계별',
+    '인비절라인 기간 얼마나 걸리나요',
+    '인비절라인 통증 적응 기간',
+    '인비절라인 장단점',
+    '인비절라인 vs 메탈교정 차이',
+    '인비절라인 vs 세라믹교정 비교',
+    '인비절라인 관리 방법',
+    '인비절라인 착용 시간',
+    '인비절라인 교체 주기',
+    '인비절라인 안 끼면 어떻게 되나요',
+    '투명교정 효과 한계',
+    '투명교정 부작용',
+    '투명교정 음식 제한',
+    '투명교정 양치 방법',
+    '투명교정 vs 부분교정 차이',
+    '성인 투명교정 적응증',
+    '투명교정 실패 원인',
+    '투명교정 유지장치 기간',
+    '인비절라인 리파인먼트 과정',
+    '인비절라인 어태치먼트 역할',
+
+    // ===== ★ v7.3+ 부분교정 (15개) =====
+    '부분교정 가능한 경우',
+    '부분교정 기간',
+    '부분교정 과정',
+    '앞니 부분교정 방법',
+    '아랫니 부분교정',
+    '부분교정 vs 전체교정 차이',
+    '부분교정 통증',
+    '부분교정 후 유지장치',
+    '부분교정 실패 사례',
+    '성인 부분교정 적응증',
+    '부분교정 재발 가능성',
+    '벌어진 앞니 부분교정',
+    '삐뚤어진 앞니 부분교정',
+    '부분교정 중 양치 방법',
+    '부분교정 음식 주의사항',
+
+    // ===== ★ v7.3+ 전체교정 (15개) =====
+    '전체교정 기간 얼마나 걸리나요',
+    '전체교정 과정 단계별',
+    '전체교정 통증 적응 기간',
+    '전체교정 vs 부분교정 어떤 경우에 해야',
+    '성인 전체교정 적응증',
+    '전체교정 중 발치 필요한 경우',
+    '전체교정 유지장치 기간',
+    '전체교정 후 재발',
+    '전체교정 턱 변화',
+    '전체교정 얼굴형 변화',
+    '돌출입 교정 방법',
+    '주걱턱 교정 가능한가요',
+    '덧니 교정 방법',
+    '교정 중 치아 흔들림 정상인가요',
+    '교정 고무줄 역할',
+
+    // ===== ★ v7.3+ 재신경치료/치근단절제술 (20개) =====
+    '재신경치료 과정',
+    '재신경치료 왜 해야 하나요',
+    '재신경치료 성공률',
+    '재신경치료 통증',
+    '재신경치료 vs 발치 판단 기준',
+    '재신경치료 횟수',
+    '재신경치료 후 크라운',
+    '신경치료 실패 원인',
+    '신경치료 실패 증상',
+    '치근단절제술 과정',
+    '치근단절제술 회복 기간',
+    '치근단절제술 성공률',
+    '치근단절제술 후 주의사항',
+    '치근단절제술 vs 재신경치료 차이',
+    '치근단절제술 적응증',
+    '치근단 병소 원인',
+    '치근단 농양 증상',
+    '치근단 염증 자연치유 되나요',
+    '신경치료 후 통증 지속 원인',
+    '신경치료 안 하면 어떻게 되나요',
+
+    // ===== ★ v7.3+ 소아치과 (20개) =====
+    '소아 충치 치료 시기',
+    '아이 충치 치료 과정',
+    '유치 충치 치료 꼭 해야 하나요',
+    '유치 신경치료 과정',
+    '유치 신경치료 안 하면',
+    '아이 치과 공포증 극복법',
+    '소아 수면치료 안전한가요',
+    '실란트 꼭 해야 하나요',
+    '실란트 시기 적정 나이',
+    '불소 도포 효과',
+    '불소 도포 몇 살부터',
+    '아이 칫솔질 방법 연령별',
+    '아이 치아 부딪혔을 때 대처',
+    '유치 흔들릴 때 억지로 빼도 되나요',
+    '영구치 나오는 순서',
+    '영구치 삐뚤게 나올 때',
+    '아이 교정 시작 시기',
+    '소아 교정 몇 살부터',
+    '아이 이갈이 원인과 대처',
+    '아이 구내염 치료',
+
+    // ===== ★ v7.3+ 구강외과/외상 (15개) =====
+    '치아 부러졌을 때 응급처치',
+    '치아 빠졌을 때 응급처치',
+    '치아 금 갔을 때 증상',
+    '치아 금 자연치유 되나요',
+    '치아 파절 치료 방법',
+    '치아 탈구 응급처치',
+    '낭종 제거 수술 과정',
+    '치성 낭종 원인',
+    '구강 점막 질환 종류',
+    '구강암 초기 증상',
+    '구강 건조증 원인과 대처',
+    '혀 통증 원인',
+    '혀 궤양 자연치유',
+    '입천장 부음 원인',
+    '턱뼈 골절 치료',
+
+    // ===== ★ v7.3+ 마취/수면치료 (15개) =====
+    '치과 마취 종류',
+    '치과 마취 안 되는 이유',
+    '치과 마취 풀리는 시간',
+    '치과 부분마취 vs 수면마취',
+    '수면마취 과정 상세',
+    '수면마취 위험성',
+    '수면마취 후 주의사항',
+    '수면치료 적응증',
+    '치과 공포증 수면치료',
+    '웃음가스 치과 효과',
+    '웃음가스 부작용',
+    '진정치료 vs 수면치료 차이',
+    '소아 수면마취 안전성',
+    '마취 알레르기 증상',
+    '치과 마취 후 저림 지속',
+
+    // ===== ★ v7.3+ 치아미용/심미 (15개) =====
+    '치아 성형 종류',
+    '치아 다이아몬드 시술',
+    '잇몸 성형 과정',
+    '잇몸 라인 교정',
+    '거미줄 치아 원인',
+    '치아 착색 원인',
+    '치아 착색 제거 방법',
+    '치아 사이 벌어짐 치료',
+    '앞니 깨짐 심미 수복',
+    '치아 모양 이상 치료',
+    '테트라사이클린 변색 치료',
+    '앞니 벌어짐 교정 vs 라미네이트',
+    '잇몸 색 검은 이유',
+    '잇몸 미백 가능한가요',
+    '스마일라인 교정',
+
+    // ===== ★ v7.3+ 보존치료 (15개) =====
+    '이차충치 원인',
+    '이차충치 증상',
+    '이차충치 예방법',
+    '치아 균열 증후군 증상',
+    '치아 균열 치료 방법',
+    '치아 마모 원인',
+    '치아 침식 산성음식',
+    '쐐기모양 결손 원인',
+    '치경부 마모 치료',
+    '치아 재석회화 가능한가요',
+    '충치 자연치유 가능한가요',
+    '초기 충치 관리법',
+    '치아 속 검은 점 충치인가요',
+    '충치 단계별 치료 방법',
+    '이 사이 충치 발견 시점',
+
+    // ===== ★ v7.3+ 치주/잇몸 심화 (15개) =====
+    '치주낭 깊이 의미',
+    '치주 수술 과정',
+    '치주 수술 후 회복',
+    '잇몸 이식 수술',
+    '잇몸 뼈 재생 가능한가요',
+    '치조골 소실 원인',
+    '잇몸 퇴축 원인',
+    '잇몸 퇴축 치료 방법',
+    '치주 스플린트란',
+    '만성 치주염 관리법',
+    '치주염 vs 치은염 차이',
+    '잇몸에서 고름 나올 때',
+    '잇몸 부음 원인',
+    '잇몸 검은색 변색 원인',
+    '스케일링 후 이가 시린 이유',
+
+    // ===== ★ v7.3+ 보철 심화 (15개) =====
+    '지르코니아 크라운 장단점',
+    'PFM 크라운 vs 지르코니아',
+    '금 크라운 vs 지르코니아',
+    '크라운 수명 얼마나',
+    '크라운 탈락 응급처치',
+    '크라운 아래 충치',
+    '임시 크라운 주의사항',
+    '크라운 씌운 후 통증 원인',
+    '올세라믹 크라운 특징',
+    '브릿지 수명 관리법',
+    '브릿지 아래 충치 관리',
+    '보철 종류 비교 총정리',
+    '오래된 보철 교체 시기',
+    '보철 탈락 대처법',
+    '임시치아 관리 주의사항',
+
+    // ===== ★ v7.3+ 구취/구강건조 (10개) =====
+    '입냄새 원인 총정리',
+    '입냄새 자가진단 방법',
+    '입냄새 치과 치료 방법',
+    '혀 세정 올바른 방법',
+    '구강건조증 원인',
+    '구강건조증 치과 치료',
+    '구강건조증 침 분비 늘리는 법',
+    '입냄새 위장 관련',
+    '입냄새 편도결석 관계',
+    '만성 입냄새 개선법',
+
+    // ===== ★ v7.3+ 디지털 치과/최신 기술 (10개) =====
+    '3D 구강스캐너 장점',
+    '디지털 치과 치료 과정',
+    'CAD CAM 보철 장점',
+    'CBCT 파노라마 차이',
+    '네비게이션 임플란트',
+    '레이저 치과 치료 종류',
+    '레이저 잇몸 치료',
+    '레이저 충치 치료',
+    '미세현미경 신경치료 장점',
+    '로봇 임플란트 수술',
   ]
 }
 

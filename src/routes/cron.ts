@@ -346,45 +346,73 @@ cronApp.post('/generate', async (c) => {
   } else {
     count = postsPerDay // 슬롯 미지정 수동: 전체
   }
-  // ★ v7.3: subcategory 라운드 로빈 — 매 발행마다 다른 주제 보장
-  // 16개 subcategory를 순환하면서 선택 → 라미네이트/크라운/턱관절/인레이 등 골고루
+  // ★ v7.3+: subcategory 라운드 로빈 — 치과 전 진료 영역 30개 순환
+  // 매 Cron 호출마다 다른 주제가 나옴 → 30일이면 모든 영역 1회전
   const SUBCATEGORY_ROTATION = [
-    'implant_general',    // 임플란트 일반
-    'crown_prosth',       // 크라운/보철
-    'laminate_cosmetic',  // 라미네이트/심미
-    'tmj_bruxism',        // 턱관절/이갈이
-    'inlay_onlay',        // 인레이/온레이
-    'orthodontics',       // 교정
-    'cavity_resin',       // 충치/레진
-    'wisdom_extraction',  // 사랑니/발치
-    'gum_perio',          // 잇몸/치주
-    'root_canal',         // 신경치료
-    'whitening',          // 미백
-    'denture',            // 틀니
-    'bridge',             // 브릿지
-    'sensitivity',        // 시린이
-    'prevention',         // 예방/스케일링
-    'emergency_pain',     // 응급/치통
+    'implant',            // 1. 임플란트
+    'crown',              // 2. 크라운/지르코니아
+    'laminate',           // 3. 라미네이트
+    'tmj',                // 4. 턱관절
+    'inlay',              // 5. 인레이/온레이
+    'invisalign',         // 6. 인비절라인/투명교정
+    'resin',              // 7. 레진치료
+    'wisdom_tooth',       // 8. 사랑니
+    'gum',                // 9. 잇몸/치주
+    'root_canal',         // 10. 신경치료
+    'partial_ortho',      // 11. 부분교정
+    'whitening',          // 12. 미백/심미
+    'denture',            // 13. 틀니
+    'cavity',             // 14. 충치/보존
+    'bridge',             // 15. 브릿지
+    'full_ortho',         // 16. 전체교정
+    'bruxism',            // 17. 이갈이
+    're_rootcanal',       // 18. 재신경치료/치근단절제술
+    'pediatric',          // 19. 소아치과
+    'anesthesia',         // 20. 마취/수면치료
+    'sensitivity',        // 21. 시린이
+    'scaling',            // 22. 스케일링
+    'oral_surgery',       // 23. 구강외과/외상
+    'halitosis',          // 24. 구취/입냄새
+    'perio_surgery',      // 25. 치주수술
+    'tooth_crack',        // 26. 치아균열/마모
+    'prosthetics',        // 27. 보철 총론
+    'digital_dental',     // 28. 디지털치과/최신기술
+    'special_patient',    // 29. 특수환자(임산부/당뇨)
+    'emergency',          // 30. 응급/치통
   ]
 
-  // subcategory → DB subcategory 매핑 (keywords 테이블의 subcategory 값)
-  const SUBCAT_DB_MAP: Record<string, { categories: string[], subcategories: string[], keywordPatterns?: RegExp }> = {
-    'implant_general':    { categories: ['implant'], subcategories: ['일반','과정','회복','관리','불안','특수','적응증','문제','비교'] },
-    'crown_prosth':       { categories: ['general'], subcategories: ['보철'], keywordPatterns: /크라운|보철/ },
-    'laminate_cosmetic':  { categories: ['general'], subcategories: ['심미'], keywordPatterns: /라미네이트|미백|치아\s*성형|하얗|누런/ },
-    'tmj_bruxism':        { categories: ['general'], subcategories: ['턱관절'], keywordPatterns: /턱관절|이갈이|악관절/ },
-    'inlay_onlay':        { categories: ['general'], subcategories: ['보철'], keywordPatterns: /인레이|온레이/ },
-    'orthodontics':       { categories: ['orthodontics'], subcategories: ['일반','비교','소아','과정','부작용','관리'] },
-    'cavity_resin':       { categories: ['general'], subcategories: ['충치'], keywordPatterns: /충치|레진/ },
-    'wisdom_extraction':  { categories: ['general'], subcategories: ['발치'], keywordPatterns: /사랑니|발치/ },
-    'gum_perio':          { categories: ['general'], subcategories: ['잇몸'], keywordPatterns: /잇몸|치주|치은|치석/ },
-    'root_canal':         { categories: ['general'], subcategories: ['신경치료'], keywordPatterns: /신경치료|신경/ },
-    'whitening':          { categories: ['general'], subcategories: ['심미'], keywordPatterns: /미백/ },
-    'denture':            { categories: ['general'], subcategories: ['틀니'], keywordPatterns: /틀니|의치/ },
-    'bridge':             { categories: ['general'], subcategories: ['브릿지'], keywordPatterns: /브릿지/ },
-    'sensitivity':        { categories: ['general'], subcategories: ['시린이'], keywordPatterns: /시린이|시림/ },
-    'prevention':         { categories: ['prevention'], subcategories: ['스케일링','소아','예방'] },
-    'emergency_pain':     { categories: ['general'], subcategories: ['응급'], keywordPatterns: /통증|응급|아프|부러|빠졌|치통/ },
+  // subcategory → DB subcategory 매핑 (classifyKeyword의 subcategory 값과 매칭)
+  const SUBCAT_DB_MAP: Record<string, { categories: string[], subcategories: string[] }> = {
+    'implant':        { categories: ['implant'], subcategories: ['임플란트_일반','임플란트_과정','임플란트_회복','임플란트_관리','임플란트_불안','임플란트_특수','임플란트_적응증','임플란트_문제','임플란트_비교'] },
+    'crown':          { categories: ['general'], subcategories: ['크라운','임시치아'] },
+    'laminate':       { categories: ['general'], subcategories: ['라미네이트'] },
+    'tmj':            { categories: ['general'], subcategories: ['턱관절'] },
+    'inlay':          { categories: ['general'], subcategories: ['인레이'] },
+    'invisalign':     { categories: ['orthodontics'], subcategories: ['인비절라인'] },
+    'resin':          { categories: ['general'], subcategories: ['레진치료'] },
+    'wisdom_tooth':   { categories: ['general'], subcategories: ['사랑니','매복사랑니'] },
+    'gum':            { categories: ['general'], subcategories: ['잇몸','잇몸퇴축','잇몸응급'] },
+    'root_canal':     { categories: ['general'], subcategories: ['신경치료'] },
+    'partial_ortho':  { categories: ['orthodontics'], subcategories: ['부분교정'] },
+    'whitening':      { categories: ['general'], subcategories: ['미백_심미','잇몸성형'] },
+    'denture':        { categories: ['general'], subcategories: ['틀니'] },
+    'cavity':         { categories: ['general'], subcategories: ['충치','이차충치'] },
+    'bridge':         { categories: ['general'], subcategories: ['브릿지'] },
+    'full_ortho':     { categories: ['orthodontics'], subcategories: ['전체교정','교정_과정','교정_비교','교정_부작용','교정_관리','교정_일반'] },
+    'bruxism':        { categories: ['general'], subcategories: ['이갈이'] },
+    're_rootcanal':   { categories: ['general'], subcategories: ['재신경치료','치근단절제술'] },
+    'pediatric':      { categories: ['general'], subcategories: ['소아치과','소아수면치료','소아교정'] },
+    'anesthesia':     { categories: ['general'], subcategories: ['마취_수면','웃음가스'] },
+    'sensitivity':    { categories: ['general'], subcategories: ['시린이'] },
+    'scaling':        { categories: ['prevention'], subcategories: ['스케일링'] },
+    'oral_surgery':   { categories: ['general'], subcategories: ['구강외과','구강점막'] },
+    'halitosis':      { categories: ['general'], subcategories: ['구취','구강건조'] },
+    'perio_surgery':  { categories: ['general'], subcategories: ['치주수술'] },
+    'tooth_crack':    { categories: ['general'], subcategories: ['치아균열','치아마모'] },
+    'prosthetics':    { categories: ['general'], subcategories: ['보철'] },
+    'digital_dental': { categories: ['general'], subcategories: ['디지털치과'] },
+    'special_patient':{ categories: ['general'], subcategories: ['특수환자'] },
+    'emergency':      { categories: ['general'], subcategories: ['응급'] },
   }
 
   // 자동 발행 설정 확인
@@ -484,8 +512,6 @@ cronApp.post('/generate', async (c) => {
 
     let candidates = (results.results || []).filter((k: any) => {
       if (COST_INSURANCE_FILTER.test(k.keyword)) return false
-      // keywordPatterns가 있으면 추가 필터 (같은 subcategory에 섞여있는 경우 정확히 매칭)
-      if (mapping.keywordPatterns && !mapping.keywordPatterns.test(k.keyword)) return false
       // 최근 발행된 동일 키워드 제외
       if (recentKeywords.has(k.keyword)) return false
       return true
