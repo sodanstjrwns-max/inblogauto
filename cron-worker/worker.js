@@ -1,4 +1,4 @@
-// Cron Worker v6.0: 안정화 강화 + publish-next 분리 아키텍처
+// Cron Worker v6.2: 디버깅+최적화
 // KST 02:00, 03:30, 05:00 → 하루 3건 발행
 // 전략: publish-next로 기존 draft 발행 → draft 부족 시 generate-drafts로 보충
 
@@ -106,13 +106,13 @@ export default {
     if (url.pathname === '/status') {
       try {
         const [dashRes, draftRes] = await Promise.all([
-          fetch(`${APP_URL}/api/dashboard`).catch(() => null),
-          fetch(`${APP_URL}/api/cron/draft-status`).catch(() => null)
+          fetch(`${APP_URL}/api/dashboard/stats`, { signal: AbortSignal.timeout(10000) }).catch(() => null),
+          fetch(`${APP_URL}/api/cron/draft-status`, { signal: AbortSignal.timeout(10000) }).catch(() => null)
         ])
         const dashData = dashRes?.ok ? await dashRes.json() : {}
         const draftData = draftRes?.ok ? await draftRes.json() : {}
         return new Response(JSON.stringify({
-          version: 'v6.0',
+          version: 'v6.2',
           today_published: dashData.today_published || 0,
           daily_target: DAILY_TARGET,
           remaining: Math.max(0, DAILY_TARGET - (dashData.today_published || 0)),
@@ -139,7 +139,7 @@ export default {
 
     if (url.pathname === '/health') {
       try {
-        const res = await fetch(`${APP_URL}/api/dashboard`, { signal: AbortSignal.timeout(10000) })
+        const res = await fetch(`${APP_URL}/api/health`, { signal: AbortSignal.timeout(10000) })
         return new Response(JSON.stringify({
           status: res.ok ? 'healthy' : 'degraded',
           app_url: APP_URL,
@@ -160,7 +160,7 @@ export default {
 
     return new Response(JSON.stringify({
       name: 'InBlog AutoPublish Cron Worker',
-      version: 'v6.1',
+      version: 'v6.2',
       schedule: 'KST 02:00, 03:30, 05:00 (±10min random)',
       daily_target: DAILY_TARGET,
       architecture: 'publish-next + generate-drafts',
