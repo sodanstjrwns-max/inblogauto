@@ -166,7 +166,7 @@ const TITLE_FORMULAS: Record<string, { patterns: { text: string; type: TitleType
     patterns: [
       { text: '~에 대해 가장 많이 묻는 질문들', type: 'Q' },
       { text: '~첫 경험이라면 이것부터 확인하세요', type: 'N' },
-      { text: '~전문의가 쓴 환자용 팩트 정리', type: 'N' },
+      { text: '~치과의사가 쓴 환자용 팩트 정리', type: 'N' },
       { text: '~검색하다 지친 분께 드리는 팩트', type: 'EXP' },
       { text: '~처음이라 막막하다면 읽어보세요', type: 'EXP' },
       { text: '~환자가 꼭 알아야 할 5가지', type: 'NUM' },
@@ -176,7 +176,7 @@ const TITLE_FORMULAS: Record<string, { patterns: { text: string; type: TitleType
     examples: (kw) => [
       `${kw}에 대해 가장 많이 묻는 질문들`,
       `${kw} 첫 경험이라면 이것부터 확인하세요`,
-      `${kw} 전문의가 쓴 환자용 팩트 정리`,
+      `${kw} 치과의사가 쓴 환자용 팩트 정리`,
       `${kw} 검색하다 지친 분께 드리는 팩트`,
       `${kw} 처음이라 막막하다면 읽어보세요`,
       `${kw} 환자가 꼭 알아야 할 5가지`,
@@ -677,7 +677,7 @@ cronApp.post('/generate', async (c) => {
         })
 
         // 5) 빈 H2 섹션 감지 (H2 바로 다음에 또 H2가 오는 경우)
-        fixedHtml = fixedHtml.replace(/<\/h2>\s*<h2/gi, '</h2>\n<p>이 부분은 개인의 구강 상태에 따라 달라질 수 있습니다. 전문의와 상담을 통해 본인에게 맞는 방법을 확인해보세요.</p>\n<h2')
+        fixedHtml = fixedHtml.replace(/<\/h2>\s*<h2/gi, '</h2>\n<p>이 부분은 개인의 구강 상태에 따라 달라질 수 있습니다. 치과의사와 상담을 통해 본인에게 맞는 방법을 확인해보세요.</p>\n<h2')
 
         // 6) 비용 금지어 최종 점검
         const COST_WORDS_STRICT = /만\s*원|가격|비용|보험\s*적용|실비|급여|비급여|건강보험|할부|할인|수가|본인부담|의료비|치료비/g
@@ -725,7 +725,7 @@ cronApp.post('/generate', async (c) => {
         // 2) 핵심 요약 하이라이트 박스 — 마지막 H2 바로 앞에 삽입
         if (!/핵심 요약|💎|한눈에 보기/.test(plain) && plain.length > 2000) {
           // 핵심 키워드 3개를 본문에서 추출
-          const keyPhrases = [kw.keyword, classified.label, '전문의 상담'].filter(Boolean)
+          const keyPhrases = [kw.keyword, classified.label, '치과의사 상담'].filter(Boolean)
           const summaryBoxHtml = `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:20px 0"><strong>💎 핵심 요약</strong><br>• ${kw.keyword}: 개인의 구강 상태에 따라 방법과 기간이 달라집니다<br>• 정확한 판단은 CT 촬영 등 정밀 진단 후 가능합니다<br>• 궁금한 점은 미리 메모해서 상담 시 질문하세요</div>`
           // FAQ H2 바로 앞에 삽입
           const faqH2Idx = html.lastIndexOf('<h2')
@@ -917,7 +917,7 @@ ${tocItems}</ol>
         {
           emoji: '💬',
           heading: '이 글이 도움이 되셨나요?',
-          body: `${kw.keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 전문의와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
+          body: `${kw.keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 치과의사와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
           action: '📌 이 글을 저장해두시면 나중에 치과 방문 시 참고하실 수 있습니다.'
         },
         {
@@ -929,7 +929,7 @@ ${tocItems}</ol>
         {
           emoji: '✅',
           heading: '마지막으로 한 가지 더',
-          body: `${kw.keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 전문의와 직접 확인하시기 바랍니다.`,
+          body: `${kw.keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 치과의사와 직접 확인하시기 바랍니다.`,
           action: '📌 주변에 같은 고민을 가진 분이 계시다면 이 글을 공유해주세요.'
         }
       ]
@@ -1186,7 +1186,7 @@ ${internalLinksBlock}
 차별화 방법:
 1. 다른 글들이 빠뜨리는 "환자가 진짜 궁금하지만 물어보기 민망한 질문"을 다루세요
    (예: "수술 중에 의식이 있는 건가요?", "냄새가 나나요?", "다음 날 출근할 수 있나요?")
-2. 전문의만 아는 판단 기준을 1개 이상 포함하세요
+2. 치과의사만 아는 판단 기준을 1개 이상 포함하세요
    (예: "CT에서 잔존 골높이가 8mm 이상이면 대부분 가능합니다")
 3. 시간 경과에 따른 경험적 정보를 넣으세요
    (예: "6개월 후 정기검진에서 가장 많이 발견되는 문제는...")
@@ -1422,7 +1422,7 @@ ${internalLinksBlock}
       if (!hasMythCorrection) {
         console.warn(`[v5.3 오해교정] 오해 교정 섹션 누락 → 자동 삽입`)
         const mythText = parsed.myth_correction || `${keyword}에 대해 인터넷에서 흔히 볼 수 있는 정보 중 실제 임상과 다른 부분이 있습니다`
-        const mythBox = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:16px;margin:20px 0;font-size:14px"><strong>⚠️ 잠깐, 이건 오해입니다</strong><br><span style="color:#dc2626">❌</span> ${mythText}<br><span style="color:#16a34a">✅</span> 실제로는 개인의 구강 상태와 관리 방법에 따라 결과가 크게 달라집니다. 정확한 판단은 반드시 전문의 진단을 통해 확인하시기 바랍니다.</div>`
+        const mythBox = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:16px;margin:20px 0;font-size:14px"><strong>⚠️ 잠깐, 이건 오해입니다</strong><br><span style="color:#dc2626">❌</span> ${mythText}<br><span style="color:#16a34a">✅</span> 실제로는 개인의 구강 상태와 관리 방법에 따라 결과가 크게 달라집니다. 정확한 판단은 반드시 치과의사 진단을 통해 확인하시기 바랍니다.</div>`
         // FAQ H2 바로 앞에 삽입
         const faqH2Idx = finalHtml.indexOf('<h2')
         const lastH2Idx = finalHtml.lastIndexOf('<h2')

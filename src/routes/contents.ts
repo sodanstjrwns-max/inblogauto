@@ -195,7 +195,7 @@ function getOpeningPattern(keyword: string, contentId: number): typeof OPENING_P
 // ===== 원장 관점 문장 풀 v7.0 (문석준 원장의 진료 철학 + 판단 기준 기반) =====
 const DOCTOR_PERSPECTIVES = [
   '제가 환자분들께 늘 말씀드리는 기준이 있습니다. "지금 불편한 게 일상을 방해하는가?"입니다. 방해한다면 미루는 것 자체가 손해입니다.',
-  '통합치의학과 전문의로서 강조하고 싶은 건, 단편적인 치료보다 전체 구강 상태를 보는 시각이 중요하다는 점입니다.',
+  '치과의사로서 강조하고 싶은 건, 단편적인 치료보다 전체 구강 상태를 보는 시각이 중요하다는 점입니다.',
   '이 치료에 대해 환자분들이 잘못 알고 계신 부분이 하나 있습니다. 실제 진료 데이터를 보면 결과가 다릅니다.',
   '치료 결정을 내리기 전에, 반드시 "내 뼈 상태가 어떤지" "전신 건강에 문제는 없는지" 이 두 가지를 먼저 확인하셔야 합니다.',
   '이 부분에서 환자분들이 가장 많이 오해하시는 것은, 아프면 이미 늦었다고 생각하시는 겁니다. 대부분의 경우 아직 충분히 회복 가능합니다.',
@@ -234,10 +234,10 @@ function buildSystemPrompt(keyword: string, contentType: ContentType, typeGuide:
   const doctorView1 = DOCTOR_PERSPECTIVES[diversitySeed % DOCTOR_PERSPECTIVES.length]
   const doctorView2 = DOCTOR_PERSPECTIVES[(diversitySeed + 5) % DOCTOR_PERSPECTIVES.length]
 
-  return `역할: 통합치의학과 전문의의 시선으로 환자의 불안을 정보로 바꾸는 블로그 글 작성자
+  return `역할: 치과의사의 시선으로 환자의 불안을 정보로 바꾸는 블로그 글 작성자
 목적: 치과 치료 때문에 걱정되는 환자가 이 글을 읽고 "아, 이 정도면 괜찮겠다"고 느끼도록 하는 것
 
-## ⚠️ 최우선 원칙: 이 글은 "전문의가 직접 작성한 글"처럼 보여야 합니다
+## ⚠️ 최우선 원칙: 이 글은 "치과의사가 직접 작성한 글"처럼 보여야 합니다
 - 교과서 복사 금지 — 모든 섹션에 **구체적 관찰, 임상 판단, 조건부 설명**이 있어야 합니다
 - "~입니다" "~합니다" 반복 금지 — "~이죠", "~거든요", "~편입니다", "~인 셈이죠", "~더라고요" 등 자연스럽게 섞기
 - 동일 문장 패턴 3회 이상 연속 반복 금지
@@ -294,7 +294,7 @@ ${experienceMarkers.map((m, i) => `${i + 1}. "${m}"`).join('\n')}
 **당신의 글은 반드시 1개 이상의 차별화 포인트를 포함해야 합니다:**
 - 다른 글들이 다루지 않는 임상적 디테일 (예: "마취가 풀릴 때 처음 10분이 가장 불쾌하다")
 - 환자가 진짜 묻지만 다른 글에서 답하지 않는 질문 (예: "수술 다음 날 출근할 수 있나요?")
-- 전문의만 아는 판단 기준 (예: "CT에서 보는 공간이 Xmm 미만이면 추가 시술 가능성")
+- 치과의사만 아는 판단 기준 (예: "CT에서 보는 공간이 Xmm 미만이면 추가 시술 가능성")
 - 시간을 두고 보면 달라지는 경험적 정보 (예: "1년 후 정기검진에서 자주 발견되는 문제")
 
 이 차별화 포인트를 content_html 본문에 **하나의 독립 H2 또는 H3 섹션**으로 넣으세요.
@@ -321,7 +321,7 @@ ${experienceMarkers.map((m, i) => `${i + 1}. "${m}"`).join('\n')}
   * "국제 학술지 연구 결과에 따르면", "임상 데이터에 따르면"
   * "대한구강악안면외과학회 가이드라인", "대한치주과학회 권고"
   * "최근 메타분석 결과", "다기관 임상연구에 따르면"
-  * 출처를 특정하기 어려우면 최소한 "임상 문헌에 따르면", "전문의 사이에서 일반적으로 인정되는 수치" 정도는 반드시 써주세요
+  * 출처를 특정하기 어려우면 최소한 "임상 문헌에 따르면", "치과의사 사이에서 일반적으로 인정되는 수치" 정도는 반드시 써주세요
 글 전체에서 **최소 2회 이상** 출처 맥락이 있는 수치 표현이 포함되어야 합니다.
 
 ## ❌➡️✅ 오해 교정 섹션 (필수 — E-E-A-T 핵심 신호)
@@ -906,7 +906,7 @@ function calculateSeoScore(content: any, keyword: string): number {
   score += Math.max(0, medLawScore)
 
   // ===== 7. 면책 문구 =====
-  const hasDisclaimer = html.includes('의료') && (html.includes('치과의사와 상담') || html.includes('치과 전문의') || html.includes('상담하시기 바랍니다'))
+  const hasDisclaimer = html.includes('의료') && (html.includes('치과의사와 상담') || html.includes('치과의사') || html.includes('상담하시기 바랍니다'))
   if (!hasDisclaimer) {
     if (html.includes('면책') || html.includes('상담하시기')) {
       score -= 2
@@ -1064,7 +1064,7 @@ function calculateSeoScore(content: any, keyword: string): number {
   }
 
   // ===== 17. 차별화 앵글 검증 (v5.2 — 경쟁글 대비 고유 관점, +5점) =====
-  // 차별화 포인트가 될 수 있는 패턴: 전문의 판단 기준, 구체적 수치, 시간 경과 정보
+  // 차별화 포인트가 될 수 있는 패턴: 치과의사 판단 기준, 구체적 수치, 시간 경과 정보
   const diffPatterns = [
     /다른 글에서|흔히 다루지 않|잘 알려지지 않/,
     /CT에서|X-ray에서|파노라마에서|mm\s*이[상하]|ml\s*이/,
@@ -1113,7 +1113,7 @@ function calculateSeoScore(content: any, keyword: string): number {
     /임상\s*문헌|임상\s*데이터|임상\s*연구/,
     /메타분석|다기관\s*연구|체계적\s*문헌고찰/,
     /통계.*따르면|보고.*있습니다|발표.*연구/,
-    /전문의\s*사이에서|일반적으로\s*인정/,
+    /치과의사\s*사이에서|일반적으로\s*인정/,
   ]
   const sourceHits = sourcePatterns.filter(p => p.test(plainText))
   if (sourceHits.length >= 3) {
@@ -1195,7 +1195,7 @@ function calculateSeoScore(content: any, keyword: string): number {
   const semanticTerms = [
     '원인', '증상', '치료', '회복', '주의', '관리', '진단', '검사',
     '부작용', '장점', '단점', '기간', '과정', '방법', '효과', '예방',
-    '상담', '전문의', '추천', '경험'
+    '상담', '치과의사', '추천', '경험'
   ]
   const semanticHits = semanticTerms.filter(t => plainText.includes(t))
   if (semanticHits.length >= 8) score += 4

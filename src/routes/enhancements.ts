@@ -1422,7 +1422,7 @@ function buildCtaHtml(keyword: string, contentId: number): string {
     {
       emoji: '💬',
       heading: '이 글이 도움이 되셨나요?',
-      body: `${keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 전문의와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
+      body: `${keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 치과의사와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
       action: '📌 이 글을 저장해두시면 나중에 치과 방문 시 참고하실 수 있습니다.'
     },
     {
@@ -1434,7 +1434,7 @@ function buildCtaHtml(keyword: string, contentId: number): string {
     {
       emoji: '✅',
       heading: '마지막으로 한 가지 더',
-      body: `${keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 전문의와 직접 확인하시기 바랍니다.`,
+      body: `${keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 치과의사와 직접 확인하시기 바랍니다.`,
       action: '📌 주변에 같은 고민을 가진 분이 계시다면 이 글을 공유해주세요.'
     }
   ]
@@ -1736,7 +1736,7 @@ JSON으로만 답변: {"b": "변형B 제목", "c": "변형C 제목"}`
   if (variantTitles.length < 3) {
     const kw = content.keyword_text
     const patterns = [
-      `${kw}, 전문의가 알려주는 핵심 포인트 (2026)`,
+      `${kw}, 치과의사가 알려주는 핵심 포인트 (2026)`,
       `${kw} 완벽 가이드 — 치료 전 반드시 알아야 할 것들`,
       `${kw}: 환자가 가장 궁금해하는 7가지 질문`
     ]
