@@ -793,7 +793,7 @@ keywordDiscoveryRoutes.post('/auto-replenish', async (c) => {
 })
 
 // ★ v7.3: POST /api/keyword-discovery/reclassify — 기존 키워드 재분류
-// 프로덕션에서 잘못 분류된 키워드를 일괄 재분류
+// 프로덕션에서 잘못 분류된 키워드를 일괄 재분류 (D1 batch로 타임아웃 방지)
 keywordDiscoveryRoutes.post('/reclassify', async (c) => {
   const body = await c.req.json().catch(() => ({}))
   const dryRun = (body as any).dry_run !== false // 기본 dry_run=true
@@ -815,13 +815,22 @@ keywordDiscoveryRoutes.post('/reclassify', async (c) => {
         old: { category: kw.category, subcategory: kw.subcategory },
         new: { category: newClassification.category, subcategory: newClassification.subcategory, priority: newClassification.priority }
       })
-      if (!dryRun) {
-        await c.env.DB.prepare(
-          "UPDATE keywords SET category = ?, subcategory = ?, priority = ? WHERE id = ?"
-        ).bind(newClassification.category, newClassification.subcategory, newClassification.priority, kw.id).run()
-      }
     } else {
       unchanged++
+    }
+  }
+
+  // 실제 적용: D1 batch로 한 번에 처리 (Workers 타임아웃 방지)
+  if (!dryRun && changes.length > 0) {
+    const batchStatements = changes.map(ch =>
+      c.env.DB.prepare(
+        "UPDATE keywords SET category = ?, subcategory = ?, priority = ? WHERE id = ?"
+      ).bind(ch.new.category, ch.new.subcategory, ch.new.priority, ch.id)
+    )
+    // D1 batch: 최대 100개씩 나눠서 실행
+    for (let i = 0; i < batchStatements.length; i += 100) {
+      const batch = batchStatements.slice(i, i + 100)
+      await c.env.DB.batch(batch)
     }
   }
 
