@@ -346,7 +346,9 @@ cronApp.post('/generate', async (c) => {
   } else {
     count = postsPerDay // 슬롯 미지정 수동: 전체
   }
-  const categoryWeights = JSON.parse(schedule?.category_weights || '{"implant":30,"orthodontics":25,"general":25,"prevention":15,"local":5}')
+  // ★ v7.2: 키워드 풀 비율에 맞게 가중치 조정 (general 58%, implant 19%, orthodontics 15%, prevention 8%)
+  // 기존: implant 30% → general/임플란트 편중. 신규: general 중심 균등 분배
+  const categoryWeights = JSON.parse(schedule?.category_weights || '{"general":40,"implant":20,"orthodontics":25,"prevention":15}')
 
   // 자동 발행 설정 확인
   if (!isManual) {
