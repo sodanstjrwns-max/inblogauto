@@ -799,10 +799,12 @@ cronApp.post('/generate', async (c) => {
       const imgStartTime = Date.now()
       
       // 2-A: 썸네일 (1200×630, OG 이미지용)
+      // ★ v7.5: 글 제목 기반 썸네일 — 키워드만으로 만들던 뻔한 이미지 탈피
       try {
         if (Date.now() - imgStartTime > imgTimeoutMs) throw new Error('이미지 타임아웃 가드')
-        const thumbResult = await generateAIImage(
-          c.env, kw.keyword, kw.category || 'general', 'thumbnail', classified.type, contentId
+        const thumbnailScene = buildThumbnailScene(bestContent.title, kw.keyword, kw.category || 'general')
+        const thumbResult = await generateBodyImage(
+          c.env, thumbnailScene, bestContent.title, contentId, -1, 1200, 630
         )
         thumbnailUrl = thumbResult.url
         
@@ -816,16 +818,35 @@ cronApp.post('/generate', async (c) => {
       }
 
       // 2-B: 본문 내 이미지 자동 삽입 (IMAGE_SLOT 마커 교체)
-      // Claude가 <!-- IMAGE_SLOT:설명 --> 마커를 삽입, 여기서 실제 이미지로 교체
-      const imageSlotRegex = /<!--\s*IMAGE_SLOT:(.*?)\s*-->/g
-      const imageSlots: { marker: string; description: string }[] = []
+      // ★ v7.5: 역방향 이미지 생성 — Claude가 alt(한국어) + scene(영어) 분리 제공
+      // 새 형식: <!-- IMAGE_SLOT | alt: 한국어 설명 | scene: English scene --> 
+      // 레거시 형식: <!-- IMAGE_SLOT:설명 --> (하위 호환)
+      const newSlotRegex = /<!--\s*IMAGE_SLOT\s*\|\s*alt:\s*(.*?)\s*\|\s*scene:\s*(.*?)\s*-->/g
+      const legacySlotRegex = /<!--\s*IMAGE_SLOT:(.*?)\s*-->/g
+      const imageSlots: { marker: string; altText: string; scenePrompt: string }[] = []
       let slotMatch
-      while ((slotMatch = imageSlotRegex.exec(finalHtml)) !== null) {
-        imageSlots.push({ marker: slotMatch[0], description: slotMatch[1].trim() })
+      
+      // 새 형식 먼저 파싱
+      while ((slotMatch = newSlotRegex.exec(finalHtml)) !== null) {
+        imageSlots.push({
+          marker: slotMatch[0],
+          altText: slotMatch[1].trim(),
+          scenePrompt: slotMatch[2].trim()
+        })
+      }
+      // 레거시 형식 폴백 (새 형식이 없을 때만)
+      if (imageSlots.length === 0) {
+        while ((slotMatch = legacySlotRegex.exec(finalHtml)) !== null) {
+          const desc = slotMatch[1].trim()
+          imageSlots.push({
+            marker: slotMatch[0],
+            altText: desc,
+            scenePrompt: buildSceneFromDescription(desc, kw.keyword)
+          })
+        }
       }
       
       // 최대 2장까지 본문 이미지 생성 (Workers 타임아웃 대응)
-      // ★ v6.0: 남은 시간이 부족하면 본문 이미지 스킵
       const imgElapsed = Date.now() - imgStartTime
       const maxBodyImages = imgElapsed > 60000 ? 0 : Math.min(imageSlots.length, 2)
       if (maxBodyImages === 0 && imageSlots.length > 0) {
@@ -835,13 +856,12 @@ cronApp.post('/generate', async (c) => {
         const slot = imageSlots[imgIdx]
         try {
           const bodyImgResult = await generateBodyImage(
-            c.env, kw.keyword, slot.description, contentId, imgIdx, classified.type
+            c.env, slot.scenePrompt, slot.altText, contentId, imgIdx
           )
           if (bodyImgResult.url) {
-            const altText = slot.description || `${kw.keyword} 관련 의료 일러스트`
-            const imgHtml = `<figure style="margin:24px 0"><img src="${bodyImgResult.url}" alt="${altText}" style="width:100%;border-radius:8px;max-height:500px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">▲ ${altText}</figcaption></figure>`
+            const imgHtml = `<figure style="margin:24px 0"><img src="${bodyImgResult.url}" alt="${slot.altText}" style="width:100%;border-radius:8px;max-height:500px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">▲ ${slot.altText}</figcaption></figure>`
             finalHtml = finalHtml.replace(slot.marker, imgHtml)
-            console.log(`[본문이미지] ${imgIdx + 1}/${maxBodyImages} 삽입 완료: ${altText.substring(0, 40)}`)
+            console.log(`[본문이미지] ${imgIdx + 1}/${maxBodyImages} 삽입 완료: ${slot.altText.substring(0, 40)}`)
           }
         } catch (bodyImgErr: any) {
           console.warn(`[본문이미지] ${imgIdx + 1} 생성 실패, 마커 제거:`, bodyImgErr.message)
@@ -849,10 +869,13 @@ cronApp.post('/generate', async (c) => {
         }
       }
       // 남은 미처리 슬롯 제거
+      finalHtml = finalHtml.replace(/<!--\s*IMAGE_SLOT\s*\|.*?-->/g, '')
       finalHtml = finalHtml.replace(/<!--\s*IMAGE_SLOT:.*?\s*-->/g, '')
 
-      // === 3단계: 이미지 URL을 HTML에 삽입하고 DB 업데이트 ===
-      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${kw.keyword} 대표 이미지" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
+      // === 3단계: 썸네일 기반 대표 이미지 삽입 ===
+      // ★ v7.5: 썸네일 alt도 제목 기반으로 구체적으로 생성
+      const thumbnailAlt = bestContent.title ? `${bestContent.title} - ${kw.keyword} 관련 치과 정보` : `${kw.keyword} 대표 이미지`
+      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${thumbnailAlt}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
       // === 3.5단계: 내부 링크 자동 삽입 ===
       if (existingPosts.length > 0) {
@@ -1907,11 +1930,19 @@ cronApp.get('/draft-status', async (c) => {
 const cronHandler = cronApp
 
 // ===== 본문 이미지 생성 (섹션별 맞춤 프롬프트, 1200×800) =====
+// ★ v7.5: 통합 이미지 생성 함수 (scene 프롬프트 직접 사용)
+// scenePrompt: Claude가 생성한 영어 장면 묘사 또는 buildThumbnailScene 결과
+// altText: 한국어 alt 태그 (로그/폴백용)
+// width/height: 기본 1200x800, 썸네일은 1200x630
 async function generateBodyImage(
-  env: any, keyword: string, slotDescription: string, contentId: number, imageIndex: number, contentType: string
+  env: any, scenePrompt: string, altText: string, contentId: number, imageIndex: number,
+  width: number = 1200, height: number = 800
 ): Promise<{ url: string }> {
   const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
-  const prompt = `High quality photorealistic 3D dental medical illustration: ${slotDescription}. Related to "${keyword}". Clean modern infographic style, soft pastel colors light blue and mint palette, ${noText}, no human faces, professional healthcare aesthetic, studio lighting, 8k quality. Image suitable for medical blog body content.`
+  const safetyGuard = 'no blood, no surgical wounds, no scary medical imagery, no close-up of real teeth, no fake 3D implant renders'
+  const styleGuide = 'warm reassuring medical atmosphere, soft natural lighting, clean modern aesthetic, professional healthcare environment, 8k quality, photorealistic'
+  
+  const prompt = `${scenePrompt}. ${styleGuide}, ${safetyGuard}, ${noText}.`
 
   // fal.ai API 키
   let falApiKey = ''
@@ -1919,14 +1950,13 @@ async function generateBodyImage(
     const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
     falApiKey = row?.value as string || ''
   } catch (e: any) {
-    console.warn('[본문이미지] fal API 키 조회 실패:', e.message || e)
+    console.warn('[이미지] fal API 키 조회 실패:', e.message || e)
   }
 
   if (falApiKey) {
-    // FLUX.2 pro → schnell 폴백 (본문 이미지는 2단계만)
     const models = [
-      { name: 'FLUX.2 pro', url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra', body: { prompt, image_size: { width: 1200, height: 800 }, num_images: 1, safety_tolerance: '5', output_format: 'jpeg' } },
-      { name: 'FLUX.1 schnell', url: 'https://fal.run/fal-ai/flux/schnell', body: { prompt, image_size: { width: 1200, height: 800 }, num_images: 1, enable_safety_checker: false } }
+      { name: 'FLUX.2 pro', url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra', body: { prompt, image_size: { width, height }, num_images: 1, safety_tolerance: '5', output_format: 'jpeg' } },
+      { name: 'FLUX.1 schnell', url: 'https://fal.run/fal-ai/flux/schnell', body: { prompt, image_size: { width, height }, num_images: 1, enable_safety_checker: false } }
     ]
 
     for (const model of models) {
@@ -1941,293 +1971,117 @@ async function generateBodyImage(
           const data: any = await res.json()
           const imageUrl = data?.images?.[0]?.url
           if (imageUrl) {
-            // ★ fal.ai 원본 URL 직접 사용 + R2 백업
+            // R2 백업
             if (env?.R2) {
               try {
                 const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
                 if (imgRes.ok) {
                   const buf = await imgRes.arrayBuffer()
-                  const key = `images/${contentId}/body_${imageIndex}.jpg`
-                  await env.R2.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' }, customMetadata: { keyword, description: slotDescription.substring(0, 200) } })
-                  console.log(`[본문이미지] R2 백업 저장 완료`)
+                  const imgType = imageIndex === -1 ? 'thumbnail' : `body_${imageIndex}`
+                  const key = `images/${contentId}/${imgType}.jpg`
+                  await env.R2.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' }, customMetadata: { alt: altText.substring(0, 200), prompt: prompt.substring(0, 200) } })
+                  console.log(`[이미지] R2 백업 저장 완료: ${imgType}`)
                 }
               } catch (r2Err: any) {
-                console.warn(`[본문이미지] R2 백업 실패 (무시): ${r2Err.message}`)
+                console.warn(`[이미지] R2 백업 실패 (무시): ${r2Err.message}`)
               }
             }
-            // fal.ai 원본 URL 직접 사용
             return { url: imageUrl }
           }
         }
       } catch (e: any) {
-        console.warn(`[본문이미지] ${model.name} 실패: ${e.message}`)
+        console.warn(`[이미지] ${model.name} 실패: ${e.message}`)
         continue
       }
     }
   }
 
-  // 폴백: 플레이스홀더 (Pollinations 서비스 중단됨)
-  console.warn(`[본문이미지] fal.ai 전체 실패 → 플레이스홀더 사용`)
+  // 폴백: 플레이스홀더
+  console.warn(`[이미지] fal.ai 전체 실패 → 플레이스홀더 사용`)
   const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', '0891B2', '7C3AED', '059669']
-  const colorIdx = Math.abs(Date.now() + imageIndex) % colors.length
-  return { url: `https://placehold.co/1200x800/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif` }
+  const colorIdx = Math.abs(Date.now() + (imageIndex >= 0 ? imageIndex : 99)) % colors.length
+  return { url: `https://placehold.co/${width}x${height}/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(altText.substring(0, 30))}&font=sans-serif` }
 }
 
-// ===== AI 이미지 생성 시스템 (키워드별 고유 이미지) =====
+// ★ v7.5: 레거시 IMAGE_SLOT 설명 → 영어 scene 변환 (하위 호환)
+function buildSceneFromDescription(description: string, keyword: string): string {
+  const desc = description.toLowerCase()
+  
+  // 키워드 기반 기본 장면 매핑
+  if (/상담|설명|안내/.test(desc)) return `A dentist's hands gesturing while explaining to a patient using a dental jaw model on a desk, warm clinic interior with soft lighting, blurred modern dental office background, reassuring professional atmosphere, no visible faces`
+  if (/치료|과정|시술/.test(desc)) return `Modern dental treatment room with a comfortable dental chair, organized dental instruments on a tray, warm ambient lighting, clean medical environment, calming atmosphere, no patient visible`
+  if (/비교|차이|vs/.test(desc)) return `Two dental restoration options displayed side by side on a clean white surface, soft studio lighting, medical comparison concept, clean infographic style, professional dental photography`
+  if (/회복|관리|유지/.test(desc)) return `A person gently touching their healthy smile area (lower face only, no eyes), fresh morning light, bathroom mirror reflection, daily oral care routine concept, warm reassuring feeling`
+  if (/통증|아프|불편/.test(desc)) return `A cozy dental consultation room with a calming blue and white color scheme, a glass of water on the table, soft cushioned chair, warm natural light from window, soothing medical environment`
+  if (/검사|진단|엑스레이/.test(desc)) return `A modern dental clinic consultation desk with a computer monitor showing dental imagery (blurred), a dentist's notepad and pen, warm professional lighting, clean organized workspace`
+  
+  // 기본 폴백
+  return `A warm inviting dental clinic reception area with modern interior design, comfortable seating, soft natural lighting, potted green plants, clean professional healthcare environment, related to ${keyword}`
+}
 
-// 콘텐츠 유형별 이미지 프롬프트 템플릿 (v7.0 — 키워드 반영 강화)
-function buildImagePrompt(keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string): string {
-  const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
-  const baseStyle = `High quality photorealistic 3D medical illustration, clean modern design, soft pastel colors with light blue and white palette, ${noText}, no human faces, no logos, professional dental healthcare aesthetic, studio lighting, cinematic composition, 8k quality, ultra-detailed`
-  
-  // 카테고리별 핵심 시각 요소
-  const categoryVisuals: Record<string, string> = {
-    implant: 'dental implant cross-section diagram, jaw bone structure, titanium screw and crown, gum tissue',
-    orthodontics: 'teeth with clear aligners, beautiful smile, orthodontic treatment concept',
-    general: 'healthy white tooth, dental mirror, clean oral care scene',
-    prevention: 'toothbrush and toothpaste, dental floss, protective shield around tooth',
-    local: 'modern dental clinic interior, comfortable dental chair, welcoming atmosphere',
-  }
-  
-  // 콘텐츠 유형별 분위기
-  const typeMood: Record<string, string> = {
-    F: 'thoughtful contemplative atmosphere, warm encouraging feeling, clear visual metaphor',
-    B: 'gentle procedural scene, calming medical environment, dental tools arranged neatly',
-    C: 'soothing recovery atmosphere, gentle warm colors, peaceful healing vibe',
-    D: 'balanced symmetrical composition, clean comparison visual',
-    E: 'calming reassuring atmosphere, warm soft lighting, peaceful comforting scene',
-  }
-  
-  // v7.0: 키워드 기반 시각 요소 자동 추가
-  let kwVisual = ''
+// ★ v7.5: 글 제목 기반 썸네일 scene 생성
+function buildThumbnailScene(title: string, keyword: string, category: string): string {
   const kw = keyword.toLowerCase()
-  if (/임플란트/.test(kw)) kwVisual = 'titanium dental implant screw, cross-section of jawbone, osseointegration concept'
-  else if (/사랑니|발치/.test(kw)) kwVisual = 'wisdom tooth extraction concept, dental forceps, gentle removal procedure'
-  else if (/교정|투명|돌출/.test(kw)) kwVisual = 'clear aligners on teeth model, before-after alignment concept'
-  else if (/신경치료|충치/.test(kw)) kwVisual = 'tooth cross-section showing root canal, dental pulp treatment concept'
-  else if (/잇몸|치주/.test(kw)) kwVisual = 'healthy gum tissue around teeth, periodontal care concept'
-  else if (/미백|라미네이트/.test(kw)) kwVisual = 'bright white teeth, cosmetic dentistry concept, radiant smile'
-  else if (/크라운|보철/.test(kw)) kwVisual = 'dental crown placement, prosthetic tooth restoration'
-  else if (/스케일링|예방/.test(kw)) kwVisual = 'professional dental cleaning tools, ultrasonic scaler, preventive care'
-  else if (/통증|아프/.test(kw)) kwVisual = 'soothing dental care concept, pain relief, calming atmosphere'
+  const t = title.toLowerCase()
   
-  const visual = kwVisual || categoryVisuals[category] || categoryVisuals.general
-  const mood = typeMood[contentType] || typeMood.B
-  
-  if (purpose === 'thumbnail') {
-    return `${baseStyle}, ${visual}, centered composition, simple clean background, blog hero image, ${mood}, related to "${keyword}"`
-  } else {
-    return `${baseStyle}, ${visual}, ${mood}, detailed realistic medical illustration, soft shadows, clean white background, related to "${keyword}"`
+  // 제목/키워드 기반 구체적 장면 매핑
+  if (/임플란트/.test(kw)) {
+    if (/회복|관리|주의/.test(t)) return `Overhead view of a dental care package on a clean white table: a soft toothbrush, gentle mouthwash bottle, ice pack, and a small note card, warm natural lighting, recovery concept`
+    if (/비교|vs|브릿지|틀니/.test(t)) return `Two dental jaw models side by side on a dentist's desk showing different restoration options, one with implant and one with bridge, clean professional lighting, comparison concept`
+    if (/과정|단계|수술/.test(t)) return `A modern dental consultation room with a large wall-mounted monitor, a dentist's hand pointing at it, comfortable patient chair visible, clean medical environment, step-by-step concept`
+    return `Close-up of a dentist's hands holding a detailed dental jaw model, showing implant area, warm clinic lighting, blurred dental office background, professional caring atmosphere`
   }
+  if (/교정|인비절라인|투명/.test(kw)) {
+    return `Clear dental aligners resting on a clean white marble surface next to their carrying case, soft window light, minimal clean aesthetic, orthodontic treatment concept`
+  }
+  if (/사랑니|발치/.test(kw)) {
+    return `A calming dental consultation desk with a glass of water, a dental mirror, and a small anatomical tooth model, warm soft lighting, reassuring medical atmosphere`
+  }
+  if (/신경치료|근관/.test(kw)) {
+    return `A dental microscope in a modern endodontic treatment room, soft blue ambient lighting, organized precision instruments, high-tech medical environment, professional atmosphere`
+  }
+  if (/잇몸|치주/.test(kw)) {
+    return `A soft-bristled toothbrush and interdental brushes arranged neatly on a clean bathroom counter, fresh morning light, daily gum care routine concept, warm welcoming feel`
+  }
+  if (/크라운|오버레이|인레이/.test(kw)) {
+    return `A dentist's gloved hands carefully examining a dental crown under a magnifying lamp, clean workstation, precision dental craftsmanship concept, warm professional lighting`
+  }
+  if (/미백|라미네이트|심미/.test(kw)) {
+    return `A bright modern dental cosmetic consultation room with a shade guide on the desk, natural sunlight streaming in, fresh clean aesthetic, cosmetic dentistry concept`
+  }
+  if (/충치|보존|레진/.test(kw)) {
+    return `A dental mirror reflecting healthy teeth, placed on a clean white surface next to a small dental model, soft studio lighting, preventive care concept, warm reassuring atmosphere`
+  }
+  if (/스케일링|예방|검진/.test(kw)) {
+    return `A bright welcoming dental hygiene room with ultrasonic scaling equipment neatly arranged, large window with natural light, potted plant on windowsill, preventive care environment`
+  }
+  if (/통증|치통|아프/.test(kw)) {
+    return `A warm cup of tea and a cold compress on a cozy bedside table, soft lamp light, comforting home care scene, gentle soothing atmosphere for dental pain relief concept`
+  }
+  if (/균열|크랙|깨/.test(kw)) {
+    return `A dental loupe and mirror placed on a professional dental tray, a small tooth model nearby, sharp detailed lighting, diagnostic precision concept, modern endodontic setting`
+  }
+  if (/턱관절|이갈이/.test(kw)) {
+    return `A dental night guard resting on its clean case next to a bedside table, soft evening lamp light, sleep health and TMJ care concept, calming bedroom atmosphere`
+  }
+  if (/소아|아이|어린이/.test(kw)) {
+    return `A colorful child-friendly dental clinic waiting area with playful decorations, small chairs, children's books, warm cheerful lighting, welcoming pediatric dentistry environment`
+  }
+  
+  // 카테고리 기반 폴백
+  const categoryScenes: Record<string, string> = {
+    implant: `A modern dental implant consultation room with anatomical models on the desk, warm professional lighting, clean medical environment`,
+    orthodontics: `Clear aligners and orthodontic tools on a clean bright dental desk, modern clinic aesthetic, organized professional environment`,
+    general: `A welcoming modern dental clinic reception with comfortable seating, soft natural lighting, green plants, clean professional healthcare atmosphere`,
+    prevention: `Daily oral care items beautifully arranged on a bathroom counter, toothbrush, floss, mouthwash, fresh morning light, healthy routine concept`,
+  }
+  
+  return categoryScenes[category] || categoryScenes.general
 }
 
-// 이미지 캡션 생성
-function getImageCaption(contentType: string, keyword: string): string {
-  return `▲ ${keyword} 관련 이미지`
-}
-
-// 이미지를 R2 또는 D1에 저장하고 URL 반환
-async function saveImageToStorage(
-  env: any, contentId: number, keyword: string, imageType: string, prompt: string, base64Data: string
-): Promise<string> {
-  // 방법 1: R2 스토리지 사용 (우선)
-  if (env?.R2) {
-    try {
-      const binaryString = atob(base64Data)
-      const bytes = new Uint8Array(binaryString.length)
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i)
-      }
-      const key = `images/${contentId}/${imageType}.jpg`
-      await env.R2.put(key, bytes.buffer, { 
-        httpMetadata: { contentType: 'image/jpeg' },
-        customMetadata: { keyword, prompt: prompt.substring(0, 200) }
-      })
-      // R2 퍼블릭 URL (Cloudflare Pages에서 자동 서빙) — 폴백으로 D1 API 사용
-      return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
-    } catch (r2Err: any) {
-      console.error('R2 저장 실패, D1 폴백:', r2Err.message)
-    }
-  }
-
-  // 방법 2: D1 폴백 (기존 방식)
-  await env.DB.prepare(
-    `INSERT OR REPLACE INTO generated_images (content_id, keyword, image_type, prompt, image_data, mime_type)
-     VALUES (?, ?, ?, ?, ?, 'image/jpeg')`
-  ).bind(contentId, keyword, imageType, prompt, base64Data).run()
-  
-  return `https://inblogauto.pages.dev/api/image/${contentId}/${imageType}.jpg`
-}
-
-// 메인 이미지 생성 함수 (고급 모델 우선)
-async function generateAIImage(
-  env: any, keyword: string, category: string, purpose: 'thumbnail' | 'illustration', contentType: string,
-  contentId?: number
-): Promise<{ url: string; caption: string }> {
-  const prompt = buildImagePrompt(keyword, category, purpose, contentType)
-  const caption = purpose === 'illustration' ? getImageCaption(contentType, keyword) : ''
-  
-  // ===== 방법 1: fal.ai FLUX 프리미엄 체인 (FLUX.2 pro → FLUX.1 pro → schnell) =====
-  // 설정에서 fal.ai API 키 읽기
-  let falApiKey = ''
-  try {
-    const falKeyRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
-    falApiKey = falKeyRow?.value as string || ''
-  } catch (e: any) {
-    console.warn('[썸네일] fal API 키 조회 실패:', e.message || e)
-  }
-  
-  if (falApiKey) {
-    // fal.ai 모델 우선순위 체인 (최고급 → 고급 → 기본)
-    const falModels = [
-      {
-        name: 'FLUX.2 pro',
-        url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra',
-        body: {
-          prompt: prompt,
-          image_size: { width: 1200, height: 630 },
-          num_images: 1,
-          safety_tolerance: '5',
-          output_format: 'jpeg',
-        },
-        cost: '~₩100/장'
-      },
-      {
-        name: 'FLUX.1 pro',
-        url: 'https://fal.run/fal-ai/flux-pro',
-        body: {
-          prompt: prompt,
-          image_size: { width: 1200, height: 630 },
-          num_images: 1,
-          safety_tolerance: '5',
-          output_format: 'jpeg',
-        },
-        cost: '~₩70/장'
-      },
-      {
-        name: 'FLUX.1 schnell',
-        url: 'https://fal.run/fal-ai/flux/schnell',
-        body: {
-          prompt: prompt,
-          image_size: { width: 1200, height: 630 },
-          num_images: 1,
-          enable_safety_checker: false,
-        },
-        cost: '~₩4/장'
-      }
-    ]
-    
-    for (const model of falModels) {
-      try {
-        console.log(`[이미지] ${model.name} 시도 중... (${model.cost})`)
-        const falResponse = await fetch(model.url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Key ${falApiKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(model.body),
-          signal: AbortSignal.timeout(60000) // 60초 타임아웃
-        })
-        
-        if (falResponse.ok) {
-          const falData: any = await falResponse.json()
-          const imageUrl = falData?.images?.[0]?.url
-          if (imageUrl) {
-            console.log(`[이미지] ✅ ${model.name} 성공: ${keyword} (${purpose}) ${model.cost}`)
-            
-            // ★ fal.ai URL을 직접 사용 (인블로그가 발행 시 이미지를 캐시/저장함)
-            // R2에도 백업 저장하되, URL은 fal.ai 원본을 사용
-            if (contentId && env?.R2) {
-              try {
-                const imgResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
-                if (imgResponse.ok) {
-                  const imgBuffer = await imgResponse.arrayBuffer()
-                  const key = `images/${contentId}/${purpose}.jpg`
-                  await env.R2.put(key, imgBuffer, {
-                    httpMetadata: { contentType: 'image/jpeg' },
-                    customMetadata: { keyword, model: model.name }
-                  })
-                  console.log(`[이미지] R2 백업 저장 완료 (URL은 fal.ai 원본 사용)`)
-                }
-              } catch (r2Err: any) {
-                console.warn(`[이미지] R2 백업 저장 실패 (무시): ${r2Err.message}`)
-              }
-            }
-            // fal.ai 원본 URL 직접 사용 (CDN이므로 수일~수주 유효)
-            return { url: imageUrl, caption }
-          }
-        } else {
-          const errText = await falResponse.text()
-          console.warn(`[이미지] ❌ ${model.name} 실패 (${falResponse.status}): ${errText.substring(0, 200)}`)
-          // 다음 모델로 자동 폴백
-          continue
-        }
-      } catch (falErr: any) {
-        console.warn(`[이미지] ❌ ${model.name} 에러: ${falErr.message}`)
-        // 다음 모델로 자동 폴백
-        continue
-      }
-    }
-    console.warn('[이미지] fal.ai 전체 모델 실패, 다음 방법으로 폴백')
-  }
-  
-  // ===== 방법 2: Cloudflare Workers AI (무료 할당량 내에서) =====
-  if (env?.AI) {
-    try {
-      const aiResult = await env.AI.run('@cf/black-forest-labs/flux-1-schnell', {
-        prompt: prompt,
-        num_steps: 4,
-      })
-      const raw = (aiResult as any)?.image ?? aiResult
-      
-      if (raw && typeof raw === 'string' && raw.length > 1000) {
-        console.log(`[이미지] Workers AI schnell 성공: ${keyword}, base64 len=${raw.length}`)
-        // R2에 저장하고 R2 API URL 반환 (프로덕션에서는 동작)
-        if (contentId && env?.R2) {
-          try {
-            const key = `images/${contentId}/${purpose === 'thumbnail' ? 'thumbnail' : `body_${contentId}`}.jpg`
-            const binaryStr = atob(raw)
-            const bytes = new Uint8Array(binaryStr.length)
-            for (let i = 0; i < binaryStr.length; i++) {
-              bytes[i] = binaryStr.charCodeAt(i)
-            }
-            await env.R2.put(key, bytes.buffer, {
-              httpMetadata: { contentType: 'image/jpeg' },
-              customMetadata: { keyword, model: 'workers-ai-schnell' }
-            })
-            const r2Url = `https://inblogauto.pages.dev/api/image/${contentId}/${purpose === 'thumbnail' ? 'thumbnail' : `body_${contentId}`}.jpg`
-            console.log(`[이미지] Workers AI → R2 저장 및 URL 반환: ${r2Url}`)
-            return { url: r2Url, caption }
-          } catch (r2Err: any) {
-            console.warn('R2 저장 실패:', r2Err.message)
-          }
-        }
-      }
-    } catch (schnellErr: any) {
-      console.warn(`Workers AI schnell 실패: ${schnellErr.message}`)
-    }
-  }
-
-  // ===== 방법 3: 플레이스홀더 폴백 (최후의 수단) =====
-  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', 'DC2626', '0891B2', '7C3AED', '059669']
-  const colorIdx = Math.abs(hashString(keyword + purpose)) % colors.length
-  const bg = colors[colorIdx]
-  const fallbackUrl = `https://placehold.co/1200x630/${bg}/ffffff?text=${encodeURIComponent(keyword)}&font=sans-serif`
-  console.log(`[이미지] 플레이스홀더 폴백: ${keyword} (${purpose})`)
-  return { url: fallbackUrl, caption }
-}
-
-// 문자열 해시 (시드 생성용)
-function hashString(str: string): number {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i)
-    hash = ((hash << 5) - hash) + char
-    hash |= 0
-  }
-  return hash
-}
+// ===== v7.5: 기존 이미지 시스템 제거 — generateBodyImage + buildThumbnailScene으로 통합 =====
+// buildImagePrompt, getImageCaption, saveImageToStorage, generateAIImage, hashString 모두 제거됨
+// 새 시스템: Claude가 alt(한국어) + scene(영어) 분리 제공 → scene을 직접 프롬프트로 사용
 
 // ===== 검색엔진 즉시 색인 요청 (IndexNow + Google Ping) =====
 // IndexNow: Bing, Naver, Yandex, DuckDuckGo 즉시 색인

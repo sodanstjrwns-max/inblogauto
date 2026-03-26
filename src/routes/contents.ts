@@ -448,7 +448,13 @@ ${opening.guide}
 7. <h3> 적극 활용
 8. <ul>/<ol> 체크리스트, 단계별 리스트
 9. 비교 시 <table>
-10. 본문 핵심 H2 2~3곳에 \`<!-- IMAGE_SLOT:설명 -->\` 삽입
+10. 본문 핵심 H2 2~3곳에 이미지 마커 삽입 (아래 규칙 엄수!)
+    - 형식: \`<!-- IMAGE_SLOT | alt: 한국어 alt 텍스트 | scene: English scene description for AI image generation -->\`
+    - **alt**: 이 이미지가 들어간 블로그 문맥에 딱 맞는 한국어 설명 (20~40자). 글의 해당 섹션 내용을 정확히 반영.
+    - **scene**: 이미지 생성 AI가 그릴 영어 장면 묘사 (50~100단어). 구체적 사물·색상·구도·분위기 포함.
+    - ❌ 금지: 치아 클로즈업, 가짜 임플란트 3D 렌더, 수술 장면, 피/혈흔, 공포감 주는 이미지
+    - ✅ 권장: 치과 상담실 풍경, 환자-의사 대화 장면(얼굴 없이 손·어깨만), 구강 모형으로 설명하는 장면, 치료 전후 비교 인포그래픽 느낌, 따뜻하고 안심되는 의료 환경, 일상 속 구강관리 장면
+    - 예시: \`<!-- IMAGE_SLOT | alt: 치과의사가 구강 모형으로 크라운 과정을 설명하는 장면 | scene: A dentist's hands holding a dental jaw model, pointing at a crown preparation area with a dental mirror, warm clinic lighting, blurred modern dental office background, soft natural tones, reassuring professional atmosphere, no visible face, clean medical aesthetic -->\`
 11. FAQ: <h2>자주 묻는 질문</h2> 아래 <details><summary>Q</summary><p>A</p></details> 5~7개
 12. 마무리 <p>: 핵심 요약 + 임파워먼트 (병원 예약 유도 금지)
 13. 면책: <div style="background:#f0f7ff;padding:16px;border-radius:8px;margin-top:32px;font-size:13px;color:#555;border-left:3px solid #3b82f6"><strong>📋 의료 정보 안내</strong><br>${disclaimer}</div>
