@@ -219,18 +219,32 @@ enhancementRoutes.post('/backfill-links', async (c) => {
     id: r.id, title: r.title, slug: r.slug, keyword: r.keyword, category: r.category || 'general'
   }))
   
-  // 대상 콘텐츠
-  let targetQuery = `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
-     c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
-     c.thumbnail_url, k.category
-     FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
-     WHERE c.status = 'published'`
-  
+  // ★ v7.1: SQL injection 방지 — contentIds 파라미터화
+  let targets: any
   if (contentIds.length > 0) {
-    targetQuery += ` AND c.id IN (${contentIds.join(',')})`
+    const safeIds = contentIds.filter((id: number) => Number.isInteger(id) && id > 0)
+    if (safeIds.length === 0) {
+      return c.json({ error: 'Invalid content_ids', results: [] }, 400)
+    }
+    const ph = safeIds.map(() => '?').join(',')
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
+       c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
+       c.thumbnail_url, k.category
+       FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+       WHERE c.status = 'published' AND c.id IN (${ph})
+       ORDER BY c.id`
+    ).bind(...safeIds).all()
+  } else {
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
+       c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
+       c.thumbnail_url, k.category
+       FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+       WHERE c.status = 'published'
+       ORDER BY c.id`
+    ).all()
   }
-  
-  const targets = await c.env.DB.prepare(targetQuery).all()
   
   const results: any[] = []
   
@@ -372,16 +386,24 @@ enhancementRoutes.post('/update-inblog', async (c) => {
   
   if (!inblogApiKey) return c.json({ error: 'Inblog API 키가 없습니다' }, 400)
   
-  let query = `SELECT c.id, c.content_html, c.title, c.meta_description, pl.inblog_post_id
-     FROM contents c
-     JOIN publish_logs pl ON c.id = pl.content_id AND pl.status = 'published'
-     WHERE c.status = 'published' AND pl.inblog_post_id IS NOT NULL`
-  
+  // ★ v7.1: SQL injection 방지 — contentIds 파라미터화
+  let targets: any
   if (contentIds.length > 0) {
-    query += ` AND c.id IN (${contentIds.join(',')})`
+    const safeIds = contentIds.filter((id: number) => Number.isInteger(id) && id > 0)
+    if (safeIds.length === 0) return c.json({ error: 'Invalid content_ids' }, 400)
+    const ph = safeIds.map(() => '?').join(',')
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.content_html, c.title, c.meta_description, pl.inblog_post_id
+       FROM contents c JOIN publish_logs pl ON c.id = pl.content_id AND pl.status = 'published'
+       WHERE c.status = 'published' AND pl.inblog_post_id IS NOT NULL AND c.id IN (${ph})`
+    ).bind(...safeIds).all()
+  } else {
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.content_html, c.title, c.meta_description, pl.inblog_post_id
+       FROM contents c JOIN publish_logs pl ON c.id = pl.content_id AND pl.status = 'published'
+       WHERE c.status = 'published' AND pl.inblog_post_id IS NOT NULL`
+    ).all()
   }
-  
-  const targets = await c.env.DB.prepare(query).all()
   
   let updated = 0
   let failed = 0
@@ -1495,17 +1517,33 @@ enhancementRoutes.post('/retrofit', async (c) => {
   const updateInblog = (body as any).update_inblog || false
   const contentIds: number[] = (body as any).content_ids || []
   
-  let query = `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
-                      c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
-                      c.thumbnail_url, k.category
-               FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
-               WHERE c.status = 'published'`
+  // ★ v7.1: SQL injection 방지 — contentIds를 파라미터화
+  let targets: any
   if (contentIds.length > 0) {
-    query += ` AND c.id IN (${contentIds.join(',')})`
+    // 숫자만 허용 (입력 검증)
+    const safeIds = contentIds.filter(id => Number.isInteger(id) && id > 0)
+    if (safeIds.length === 0) {
+      return c.json({ error: 'Invalid content_ids', updated: 0 }, 400)
+    }
+    const placeholders = safeIds.map(() => '?').join(',')
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
+              c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
+              c.thumbnail_url, k.category
+       FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+       WHERE c.status = 'published' AND c.id IN (${placeholders})
+       ORDER BY c.id`
+    ).bind(...safeIds).all()
+  } else {
+    targets = await c.env.DB.prepare(
+      `SELECT c.id, c.title, c.slug, c.keyword_text, c.meta_description,
+              c.content_html, c.faq_json, c.created_at, c.updated_at, c.word_count,
+              c.thumbnail_url, k.category
+       FROM contents c LEFT JOIN keywords k ON c.keyword_id = k.id
+       WHERE c.status = 'published'
+       ORDER BY c.id`
+    ).all()
   }
-  query += ` ORDER BY c.id`
-  
-  const targets = await c.env.DB.prepare(query).all()
   const items = (targets.results || []) as any[]
   
   let tocAdded = 0, ctaAdded = 0, schemaAdded = 0, totalUpdated = 0
@@ -1579,12 +1617,14 @@ enhancementRoutes.post('/retrofit', async (c) => {
     const inblogApiKey = inblogKeyRow?.value as string || c.env.INBLOG_API_KEY || ''
     
     if (inblogApiKey) {
-      const updatedIds = details.map(d => d.id)
+      // ★ v7.1: SQL injection 방지 — updatedIds 파라미터화
+      const updatedIds = details.map(d => d.id).filter((id: number) => Number.isInteger(id) && id > 0)
+      const updPlaceholders = updatedIds.map(() => '?').join(',')
       const publishedPosts = await c.env.DB.prepare(
         `SELECT c.id, c.content_html, pl.inblog_post_id
          FROM contents c JOIN publish_logs pl ON c.id = pl.content_id AND pl.status = 'published'
-         WHERE c.id IN (${updatedIds.join(',')}) AND pl.inblog_post_id IS NOT NULL`
-      ).all()
+         WHERE c.id IN (${updPlaceholders}) AND pl.inblog_post_id IS NOT NULL`
+      ).bind(...updatedIds).all()
       
       let ok = 0, fail = 0
       for (const p of (publishedPosts.results || []) as any[]) {
@@ -2029,9 +2069,13 @@ enhancementRoutes.post('/patient-questions/to-keywords', async (c) => {
     ).all()
     questions = (result.results || []) as any[]
   } else if (questionIds.length > 0) {
+    // ★ v7.1: SQL injection 방지 — questionIds 파라미터화
+    const safeQIds = questionIds.filter((id: number) => Number.isInteger(id) && id > 0)
+    if (safeQIds.length === 0) return c.json({ error: 'Invalid question_ids' }, 400)
+    const ph = safeQIds.map(() => '?').join(',')
     const result = await c.env.DB.prepare(
-      `SELECT * FROM patient_questions WHERE id IN (${questionIds.join(',')}) AND is_used = 0`
-    ).all()
+      `SELECT * FROM patient_questions WHERE id IN (${ph}) AND is_used = 0`
+    ).bind(...safeQIds).all()
     questions = (result.results || []) as any[]
   } else {
     return c.json({ error: 'question_ids 또는 auto_select 필요' }, 400)
@@ -2420,16 +2464,26 @@ enhancementRoutes.post('/fix-realnames', async (c) => {
     const updateInblog = (body as any).update_inblog === true // Inblog도 업데이트 여부
     const targetIds: number[] | null = (body as any).content_ids || null // 특정 ID만 처리
     
-    let query = `SELECT c.id, c.keyword_text as keyword, c.title, c.content_html, c.status,
-                        pl.inblog_url, pl.inblog_post_id
-                 FROM contents c
-                 LEFT JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published'`
+    // ★ v7.1: SQL injection 방지 — targetIds 파라미터화
+    let contents: any
     if (targetIds && targetIds.length > 0) {
-      query += ` WHERE c.id IN (${targetIds.join(',')})`
+      const safeIds = targetIds.filter((id: number) => Number.isInteger(id) && id > 0)
+      if (safeIds.length === 0) return c.json({ error: 'Invalid content_ids' }, 400)
+      const ph = safeIds.map(() => '?').join(',')
+      contents = await c.env.DB.prepare(
+        `SELECT c.id, c.keyword_text as keyword, c.title, c.content_html, c.status,
+                pl.inblog_url, pl.inblog_post_id
+         FROM contents c LEFT JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published'
+         WHERE c.id IN (${ph}) ORDER BY c.id ASC`
+      ).bind(...safeIds).all()
+    } else {
+      contents = await c.env.DB.prepare(
+        `SELECT c.id, c.keyword_text as keyword, c.title, c.content_html, c.status,
+                pl.inblog_url, pl.inblog_post_id
+         FROM contents c LEFT JOIN publish_logs pl ON pl.content_id = c.id AND pl.status = 'published'
+         ORDER BY c.id ASC`
+      ).all()
     }
-    query += ` ORDER BY c.id ASC`
-    
-    const contents = await c.env.DB.prepare(query).all()
     
     const results: any[] = []
     let totalFixed = 0

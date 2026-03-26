@@ -38,7 +38,8 @@ async function verifyInblogApiKey(apiKey: string): Promise<InblogApiKeyInfo> {
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/vnd.api+json'
-    }
+    },
+    signal: AbortSignal.timeout(15000) // 15초 타임아웃
   })
 
   if (!response.ok) {
@@ -66,7 +67,8 @@ async function listInblogAuthors(apiKey: string): Promise<{ id: string; name: st
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/vnd.api+json'
-    }
+    },
+    signal: AbortSignal.timeout(15000)
   })
 
   if (!response.ok) return []
@@ -103,7 +105,8 @@ async function listInblogTags(apiKey: string): Promise<InblogTagResult[]> {
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/vnd.api+json'
-    }
+    },
+    signal: AbortSignal.timeout(15000)
   })
 
   if (!response.ok) return []
@@ -146,7 +149,8 @@ async function createInblogTag(apiKey: string, name: string): Promise<InblogTagR
           slug: slug
         }
       }
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   })
 
   if (!response.ok) {
@@ -275,7 +279,8 @@ async function createInblogPost(
       'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/vnd.api+json'
     },
-    body: JSON.stringify(requestBody)
+    body: JSON.stringify(requestBody),
+    signal: AbortSignal.timeout(30000) // 포스트 생성은 30초
   })
 
   if (!response.ok) {
@@ -359,7 +364,8 @@ async function publishInblogPost(
         type: 'publish_action',
         attributes
       }
-    })
+    }),
+    signal: AbortSignal.timeout(20000) // 발행은 20초
   })
 
   if (!response.ok) {

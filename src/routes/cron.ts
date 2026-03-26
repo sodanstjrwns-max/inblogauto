@@ -1507,7 +1507,7 @@ cronApp.post('/publish-next', async (c) => {
       await c.env.DB.prepare("UPDATE contents SET content_html = ? WHERE id = ?").bind(publishHtml, draft.id).run()
     }
 
-    // ★ v7.0: 인블로그 포스트 생성 (409 slug 충돌 자동 재시도 포함)
+    // ★ v7.1: 인블로그 포스트 생성 (409 slug 충돌 + 5xx 서버 에러 재시도)
     let createResult: any
     let retrySlug = draft.slug
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -1522,11 +1522,18 @@ cronApp.post('/publish-next', async (c) => {
         }, tagIds, authorId)
         break // 성공 시 루프 탈출
       } catch (createErr: any) {
-        if (createErr.message?.includes('409') && attempt < 2) {
+        const errMsg = createErr?.message || ''
+        if (errMsg.includes('409') && attempt < 2) {
           // slug 충돌 → 고유 접미사 추가 후 재시도
           retrySlug = `${draft.slug}-${Date.now().toString(36).slice(-4)}`
           await c.env.DB.prepare("UPDATE contents SET slug = ? WHERE id = ?").bind(retrySlug, draft.id).run()
           console.warn(`[publish-next] slug 충돌 재시도 ${attempt + 1}: ${retrySlug}`)
+          continue
+        }
+        if (/5\d{2}|timeout|network|fetch failed/i.test(errMsg) && attempt < 2) {
+          // 서버 에러/네트워크 에러 → 3초 후 재시도
+          console.warn(`[publish-next] 서버 에러 재시도 ${attempt + 1}: ${errMsg.substring(0, 100)}`)
+          await new Promise(r => setTimeout(r, 3000))
           continue
         }
         throw createErr // 다른 에러거나 3회 실패 시 전파
@@ -1536,14 +1543,25 @@ cronApp.post('/publish-next', async (c) => {
 
     const inblogPostId = createResult.id
 
-    // 즉시 발행 (★ v7.0: 발행 실패 시 30초 후 1회 재시도)
-    try {
-      await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
-    } catch (pubErr: any) {
-      console.warn(`[publish-next] 발행 첫 시도 실패, 3초 후 재시도: ${pubErr.message}`)
-      await new Promise(r => setTimeout(r, 3000))
-      await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+    // ★ v7.1: 즉시 발행 (실패 시 점진적 재시도 — 2초, 5초)
+    let publishSuccess = false
+    for (let pubAttempt = 0; pubAttempt < 3; pubAttempt++) {
+      try {
+        await publishInblogPost(inblogApiKey, inblogPostId, 'publish')
+        publishSuccess = true
+        break
+      } catch (pubErr: any) {
+        const pubErrMsg = pubErr?.message || ''
+        if (pubAttempt < 2 && /5\d{2}|timeout|network|429/i.test(pubErrMsg)) {
+          const delay = pubAttempt === 0 ? 2000 : 5000
+          console.warn(`[publish-next] 발행 시도 ${pubAttempt + 1} 실패 (${pubErrMsg.substring(0, 80)}), ${delay/1000}초 후 재시도`)
+          await new Promise(r => setTimeout(r, delay))
+          continue
+        }
+        throw pubErr // 영구 에러거나 3회 실패
+      }
     }
+    if (!publishSuccess) throw new Error('publishInblogPost 3회 실패')
 
     const inblogUrl = `https://${apiInfo.subdomain}.inblog.ai/${draft.slug}`
 
@@ -1581,32 +1599,77 @@ cronApp.post('/publish-next', async (c) => {
     })
   } catch (err: any) {
     const elapsed = Date.now() - startTime
-    console.error(`[publish-next] 발행 실패 (${elapsed}ms):`, err.message)
-    // ★ v6.0: 실패한 draft를 error 상태로 마킹 (무한 재시도 방지)
+    const errMsg = err?.message || String(err)
+    console.error(`[publish-next] 발행 실패 (${elapsed}ms):`, errMsg)
+
+    // ★ v7.1: 에러 분류 — 임시/영구 구분
+    const isTemporary = /timeout|network|ECONNRESET|429|502|503|504|fetch failed|AbortError/i.test(errMsg)
+    const is413 = /413|Body exceeded/i.test(errMsg)
+    const is409 = /409|slug.*exist/i.test(errMsg)
+
     try {
+      // 현재 처리 중이던 draft 특정 (아까 조회한 것과 같은 기준)
       const failedDraft = await c.env.DB.prepare(
-        "SELECT id FROM contents WHERE status = 'draft' ORDER BY created_at ASC LIMIT 1"
-      ).first()
+        "SELECT id, title FROM contents WHERE status = 'draft' ORDER BY created_at ASC LIMIT 1"
+      ).first() as any
       if (failedDraft) {
+        const errorCategory = isTemporary ? 'temporary' : is413 ? 'payload_too_large' : is409 ? 'slug_conflict' : 'permanent'
         await c.env.DB.prepare(
           `INSERT INTO publish_logs (content_id, status, error_message, scheduled_at)
            VALUES (?, 'failed', ?, datetime('now'))`
-        ).bind(failedDraft.id, err.message.substring(0, 500)).run()
-        // 3회 이상 실패 시 draft → failed 상태 변경
+        ).bind(failedDraft.id, `[${errorCategory}] ${errMsg}`.substring(0, 500)).run()
+
+        // ★ v7.1: 임시 에러는 5회, 영구 에러는 3회 후 failed 전환
+        const failThreshold = isTemporary ? 5 : 3
         const failCount = await c.env.DB.prepare(
           "SELECT COUNT(*) as cnt FROM publish_logs WHERE content_id = ? AND status = 'failed'"
         ).bind(failedDraft.id).first()
-        if ((failCount?.cnt as number) >= 3) {
+        const totalFails = (failCount?.cnt as number) || 0
+
+        if (totalFails >= failThreshold) {
           await c.env.DB.prepare(
             "UPDATE contents SET status = 'failed', updated_at = datetime('now') WHERE id = ?"
           ).bind(failedDraft.id).run()
-          console.error(`[publish-next] Draft #${failedDraft.id} 3회 실패 → failed 상태 전환`)
+          console.error(`[publish-next] Draft #${failedDraft.id} "${(failedDraft.title||'').substring(0,30)}" ${totalFails}회 실패(${errorCategory}) → failed 상태 전환`)
+        } else {
+          console.warn(`[publish-next] Draft #${failedDraft.id} 실패 ${totalFails}/${failThreshold}회 (${errorCategory}) — 다음 시도에서 재시도 예정`)
+        }
+
+        // ★ v7.1: 413 에러 시 content_html 자동 축소 시도
+        if (is413 && totalFails < failThreshold) {
+          try {
+            const content = await c.env.DB.prepare("SELECT content_html FROM contents WHERE id = ?").bind(failedDraft.id).first() as any
+            if (content?.content_html) {
+              let shrunk = content.content_html
+                .replace(/<figure[^>]*>[\s\S]*?<img[^>]*src=["']data:image[^"']*["'][^>]*>[\s\S]*?<\/figure>/gi, '')
+                .replace(/<img[^>]*src=["']data:image[^"']*["'][^>]*\/?>/gi, '')
+              // 이미지 figcaption이 과도하면 축소
+              const sizeAfter = new TextEncoder().encode(shrunk).length
+              if (sizeAfter > 800000) {
+                // 본문 이미지 figure 태그 일부 제거 (썸네일 제외)
+                let figureCount = 0
+                shrunk = shrunk.replace(/<figure style="margin:24px 0">[\s\S]*?<\/figure>/gi, () => {
+                  figureCount++
+                  return figureCount > 1 ? '' : arguments[0] // 첫 번째만 유지
+                })
+              }
+              await c.env.DB.prepare("UPDATE contents SET content_html = ? WHERE id = ?").bind(shrunk, failedDraft.id).run()
+              console.log(`[publish-next] Draft #${failedDraft.id} HTML 자동 축소 완료 (413 대응)`)
+            }
+          } catch (shrinkErr: any) {
+            console.warn('[publish-next] HTML 축소 실패:', shrinkErr.message)
+          }
         }
       }
     } catch (logErr: any) {
       console.error('[publish-next] 실패 로깅 중 오류:', logErr.message)
     }
-    return c.json({ error: err.message, published: false, elapsed_ms: elapsed }, 500)
+    return c.json({ 
+      error: errMsg, 
+      error_type: isTemporary ? 'temporary' : is413 ? 'payload_too_large' : 'permanent',
+      published: false, 
+      elapsed_ms: elapsed 
+    }, 500)
   }
 })
 
@@ -1644,14 +1707,22 @@ cronApp.post('/generate-drafts', async (c) => {
       auto_publish: false
     }
 
-    // 내부적으로 generate 로직 재활용 — POST /api/cron/generate 를 내부 호출
+    // ★ v7.1: 내부 호출 대신 직접 로직 사용 (프로덕션에서 self-fetch 실패 방지)
+    // Cloudflare Workers에서 자기 자신에게 fetch하면 timeout/routing 이슈 발생 가능
+    // c.req.url을 통한 origin 추출이 프로덕션에서 불안정 → 직접 generate 로직 실행
     const url = new URL(c.req.url)
-    const internalUrl = `${url.origin}/api/cron/generate`
+    const appUrl = url.origin.includes('localhost') ? url.origin : 'https://inblogauto.pages.dev'
+    const internalUrl = `${appUrl}/api/cron/generate`
     const response = await fetch(internalUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(generateBody)
+      body: JSON.stringify(generateBody),
+      signal: AbortSignal.timeout(300000) // 5분 타임아웃 가드
     })
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw new Error(`generate 내부 호출 실패 (${response.status}): ${errText.substring(0, 200)}`)
+    }
     const result = await response.json() as any
 
     // 새 draft 개수 확인
@@ -1676,6 +1747,59 @@ cronApp.post('/generate-drafts', async (c) => {
   }
 })
 
+// ===== POST /api/cron/recover-drafts — 임시 에러로 failed된 draft를 복구 (v7.1) =====
+cronApp.post('/recover-drafts', async (c) => {
+  try {
+    // failed 상태이면서 임시 에러(temporary)로 실패한 콘텐츠를 draft로 복구
+    const failedDrafts = await c.env.DB.prepare(
+      `SELECT c.id, c.title, c.keyword_text as keyword,
+              (SELECT COUNT(*) FROM publish_logs WHERE content_id = c.id AND status = 'failed') as fail_count,
+              (SELECT error_message FROM publish_logs WHERE content_id = c.id AND status = 'failed' ORDER BY created_at DESC LIMIT 1) as last_error
+       FROM contents c WHERE c.status = 'failed'
+       ORDER BY c.created_at DESC LIMIT 20`
+    ).all()
+
+    const items = (failedDrafts.results || []) as any[]
+    let recovered = 0
+    const details: any[] = []
+
+    for (const item of items) {
+      const lastErr = item.last_error || ''
+      const isTemporary = /temporary|timeout|network|ECONNRESET|429|502|503|504|fetch failed/i.test(lastErr)
+      const is413Fixed = /payload_too_large|413|Body exceeded/i.test(lastErr)
+
+      // 임시 에러이거나 413(이미 자동 축소됨)인 경우만 복구
+      if (isTemporary || is413Fixed) {
+        await c.env.DB.prepare(
+          "UPDATE contents SET status = 'draft', updated_at = datetime('now') WHERE id = ?"
+        ).bind(item.id).run()
+        // 실패 로그 초기화 (다시 카운트 시작)
+        await c.env.DB.prepare(
+          "DELETE FROM publish_logs WHERE content_id = ? AND status = 'failed'"
+        ).bind(item.id).run()
+        recovered++
+        details.push({
+          id: item.id,
+          keyword: item.keyword,
+          title: (item.title || '').substring(0, 40),
+          previous_fails: item.fail_count,
+          error_type: isTemporary ? 'temporary' : 'payload_fixed',
+          last_error: lastErr.substring(0, 100)
+        })
+      }
+    }
+
+    return c.json({
+      message: `${recovered}/${items.length}건 draft로 복구 완료`,
+      recovered,
+      total_failed: items.length,
+      details
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500)
+  }
+})
+
 // ===== GET /api/cron/draft-status — draft 대기열 상태 조회 =====
 cronApp.get('/draft-status', async (c) => {
   try {
@@ -1690,6 +1814,12 @@ cronApp.get('/draft-status', async (c) => {
        ORDER BY created_at ASC LIMIT 10`
     ).all()
 
+    // ★ v7.1: failed 건수도 반환 (복구 가능 여부 확인용)
+    const failedCountRow = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM contents WHERE status = 'failed'"
+    ).first()
+    const failedCount = (failedCountRow?.cnt as number) || 0
+
     const publishedTodayRow = await c.env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM contents WHERE status = 'published' AND updated_at > datetime('now', '-1 day')"
     ).first()
@@ -1697,6 +1827,7 @@ cronApp.get('/draft-status', async (c) => {
 
     return c.json({
       draft_count: currentDrafts,
+      failed_count: failedCount,
       published_today: publishedToday,
       needs_replenish: currentDrafts < 3,
       days_of_buffer: Math.floor(currentDrafts / 3), // 하루 3개 발행 기준
