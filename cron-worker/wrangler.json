@@ -1,15 +1,14 @@
 {
   "name": "inblogauto-cron",
-  "main": "worker.js",
+  "main": "src/index.ts",
   "compatibility_date": "2026-03-17",
   "triggers": {
     "crons": [
-      "0 17 * * *",
-      "30 18 * * *",
-      "0 20 * * *"
+      "0 22 * * *",
+      "0 9 * * *"
     ]
   },
   "vars": {
-    "APP_URL": "https://inblogauto.pages.dev"
+    "TARGET_URL": "https://inblogauto.pages.dev/api/cron/generate"
   }
 }

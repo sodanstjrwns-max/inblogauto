@@ -332,8 +332,8 @@ cronApp.post('/generate', async (c) => {
   const schedule: any = await c.env.DB.prepare("SELECT * FROM schedules WHERE name = 'default'").first()
   const postsPerDay = schedule?.posts_per_day || 5
   
-  // ===== 새벽 한방 발행 전략 =====
-  // Cloudflare Cron Trigger가 새벽(KST 02:00~05:30)에 5번 호출
+  // ===== 자동 발행 전략 (v7.6) =====
+  // Cloudflare Workers Cron Trigger가 하루 2번 호출 (KST 07:00, 18:00)
   // 각 호출 시 1건씩 생성+발행 → Workers 타임아웃 걱정 없음
   // 수동 호출 시에는 지정 건수 사용
   let count: number
@@ -341,7 +341,7 @@ cronApp.post('/generate', async (c) => {
     count = requestedCount // 수동: 지정 건수
   } else if (!isManual) {
     // Cron 자동 호출: 항상 1건씩 (타임아웃 안전)
-    // 하루 총 발행 수는 cron 호출 횟수(5회)로 제어
+    // 하루 총 발행 수는 cron 호출 횟수로 제어 (DB: posts_per_day)
     count = 1
   } else {
     count = postsPerDay // 슬롯 미지정 수동: 전체
@@ -1314,7 +1314,7 @@ ${internalLinksBlock}
       if (codeBlockMatch) {
         cleanText = codeBlockMatch[1].trim()
       }
-      // 여전히 ``` 잔여물이 있으면 제거
+      // ★ v7.5.1: 닫는 ```가 없는 경우 (max_tokens 잘림) — 시작 ```만 제거
       cleanText = cleanText.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?\s*```\s*$/, '')
       
       // 2) 최외곽 JSON 객체 추출 ({로 시작해서 }로 끝나는 가장 큰 블록)
@@ -1326,9 +1326,31 @@ ${internalLinksBlock}
       }
       
       if (!jsonStr) {
-        lastError = `JSON 파싱 실패 (${model.label}) — 응답: ${text.substring(0, 300)}`
-        console.warn(`[Claude] ${lastError}`)
-        continue
+        // ★ v7.5.1: max_tokens 잘림 복구 — {는 있는데 }가 없으면 복구 시도
+        if (firstBrace !== -1 && lastBrace <= firstBrace) {
+          // 잘린 JSON: content_html 필드를 수동 추출
+          const truncatedJson = cleanText.substring(firstBrace)
+          const titleMatch = truncatedJson.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const slugMatch = truncatedJson.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const metaMatch = truncatedJson.match(/"meta_description"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
+          const htmlMatch = truncatedJson.match(/"content_html"\s*:\s*"([\s\S]*?)"\s*,\s*"tags"/s)
+          if (titleMatch && htmlMatch) {
+            console.warn(`[Claude] ${model.label} 응답 잘림 → 수동 필드 추출로 복구`)
+            parsed = {
+              title: titleMatch[1],
+              slug: slugMatch ? slugMatch[1] : keyword.replace(/\s+/g, '-').toLowerCase(),
+              meta_description: metaMatch ? metaMatch[1] : '',
+              content_html: htmlMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n'),
+              tags: [],
+              faq: [],
+            }
+          }
+        }
+        if (!parsed) {
+          lastError = `JSON 파싱 실패 (${model.label}) — 응답: ${text.substring(0, 300)}`
+          console.warn(`[Claude] ${lastError}`)
+          continue
+        }
       }
 
       // JSON 파싱 시도 — content_html 내부의 특수문자로 인한 파싱 오류 복구
@@ -1506,16 +1528,21 @@ cronApp.post('/publish-next', async (c) => {
     ).first()
     const draftCount = (draftCountRow?.cnt as number) || 0
 
-    // ★ v6.0: 오늘 이미 발행된 수 체크 (중복 발행 방지 — 이중 안전장치)
+    // ★ v7.6: 일일 발행 제한을 DB 스케줄에서 읽음 (하드코딩 제거)
+    const scheduleRow: any = await c.env.DB.prepare(
+      "SELECT posts_per_day FROM schedules WHERE name = 'default'"
+    ).first()
+    const maxDaily = scheduleRow?.posts_per_day || 2
+
     const todayPublishedRow = await c.env.DB.prepare(
       "SELECT COUNT(*) as cnt FROM contents WHERE status = 'published' AND updated_at > datetime('now', '-1 day')"
     ).first()
     const todayPublished = (todayPublishedRow?.cnt as number) || 0
-    if (todayPublished >= 5) {
-      console.log(`[publish-next] 오늘 이미 ${todayPublished}건 발행 → 스킵 (최대 5건/일)`)
+    if (todayPublished >= maxDaily) {
+      console.log(`[publish-next] 오늘 이미 ${todayPublished}건 발행 → 스킵 (최대 ${maxDaily}건/일)`)
       return c.json({
         published: false,
-        message: `오늘 이미 ${todayPublished}건 발행 완료 (최대 5건/일)`,
+        message: `오늘 이미 ${todayPublished}건 발행 완료 (최대 ${maxDaily}건/일)`,
         drafts_remaining: draftCount,
         today_published: todayPublished
       })
