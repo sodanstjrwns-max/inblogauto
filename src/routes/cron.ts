@@ -1539,10 +1539,10 @@ cronApp.post('/publish-next', async (c) => {
       })
     }
 
-    // ★ v6.0: slug 중복 체크 (같은 slug로 이미 발행된 글이 있으면 slug 변경)
+    // ★ v7.5: slug 중복 체크 (LIKE → INSTR로 변경 — D1 LIKE 패턴 복잡도 에러 방지)
     const existingSlug = await c.env.DB.prepare(
-      "SELECT id FROM publish_logs WHERE inblog_url LIKE ? AND status = 'published'"
-    ).bind(`%/${draft.slug}`).first()
+      "SELECT id FROM publish_logs WHERE INSTR(inblog_url, ?) > 0 AND status = 'published'"
+    ).bind(`/${draft.slug}`).first()
     if (existingSlug) {
       const uniqueSuffix = `-${Date.now().toString(36).slice(-4)}`
       draft.slug = draft.slug + uniqueSuffix
