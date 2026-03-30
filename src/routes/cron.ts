@@ -321,9 +321,48 @@ async function getPublishedPosts(db: D1Database, excludeKeyword?: string): Promi
 }
 
 // POST /api/cron/generate - 자동/수동 콘텐츠 생성 + 선택적 자동 발행
+// ★ v7.8: async_mode 파라미터 추가 — Cron Worker 호출 시 즉시 202 반환
 cronApp.post('/generate', async (c) => {
-  try {
   const body = await c.req.json().catch(() => ({}))
+  const asyncMode = (body as any).async_mode === true
+
+  if (asyncMode) {
+    const jobId = `job_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+    console.log(`[generate] ★ v7.8 async 접수 — jobId: ${jobId}`)
+
+    // waitUntil: 응답 반환 후에도 백그라운드에서 계속 실행
+    // Pages Worker의 waitUntil은 wall-clock 무제한, CPU time만 제한
+    // Claude API 호출은 대부분 I/O 대기 → CPU time 거의 안 씀
+    c.executionCtx.waitUntil(
+      executeGenerate(c, body, jobId).then(async () => {
+        console.log(`[generate-async] ✅ ${jobId} 백그라운드 작업 완료`)
+      }).catch(async (err: any) => {
+        console.error(`[generate-async] ❌ ${jobId} 실패: ${err.message}`)
+        try {
+          await c.env.DB.prepare(
+                "INSERT INTO publish_logs (content_id, status, error_message, scheduled_at, created_at) VALUES (0, 'failed', ?, datetime('now'), datetime('now'))"
+              ).bind(`[async] ${jobId}: ${(err.message || '').substring(0, 400)}`).run()
+        } catch {}
+      })
+    )
+
+    return c.json({
+      accepted: true,
+      async: true,
+      job_id: jobId,
+      message: '발행 작업이 백그라운드에서 시작됨 (최대 5분 소요)',
+      timestamp: new Date().toISOString(),
+    }, 202)
+  }
+
+  // 동기 모드 (수동 호출, 대시보드에서 직접 호출 등)
+  return executeGenerate(c, body)
+})
+
+// ===== executeGenerate: 실제 콘텐츠 생성 로직 (v7.8 — async/sync 공용) =====
+// c (Hono Context)를 그대로 받아서 c.env.DB, c.json() 등 기존 코드 100% 호환
+async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<Response> {
+  try {
   const requestedCount = (body as any).count || 0
   const isManual = (body as any).manual || false
   const autoPublishOverride = (body as any).auto_publish // true/false 직접 지정
@@ -1127,9 +1166,10 @@ ${tocItems}</ol>
     debug: { count, selectedKeywords: selectedKeywords.length, keywordsPool: keywords.length, isManual }
   })
   } catch (outerErr: any) {
+    console.error(`[generate] 오류${asyncJobId ? ` (${asyncJobId})` : ''}: ${outerErr?.message}`)
     return c.json({ error: 'Cron 라우트 오류: ' + (outerErr?.message || String(outerErr)), stack: outerErr?.stack?.substring(0, 500) }, 500)
   }
-})
+}
 
 // ===== Claude API 호출 (v5.1 — 절대 스팸 불가 + 제목 사후검증 + 남용키워드/지역명/연도 자동제거) =====
 async function callClaude(
@@ -1265,13 +1305,11 @@ ${internalLinksBlock}
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
-  // Opus → Sonnet 자동 폴백 전략
-  // Workers 유료 플랜 6분(360초) 제한 고려
-  // Opus 4.6: 240초 (4분) — 한국어 긴 글 생성에 충분한 시간
-  // Sonnet 4: 120초 (2분) — 폴백 모델, 더 빠름
+  // ★ v7.8.1: Sonnet 4.5 우선 — 최신 모델로 속도와 품질 개선
+  // max_tokens 4096으로 줄여 응답 시간 단축 (Workers wall-clock 제한 대응)
   const models = [
-    { id: 'claude-opus-4-6', timeout: 240000, label: 'Opus 4.6' },
-    { id: 'claude-sonnet-4-20250514', timeout: 120000, label: 'Sonnet 4' },
+    { id: 'claude-sonnet-4-5-20250929', timeout: 180000, label: 'Sonnet 4.5' },
+    { id: 'claude-sonnet-4-20250514', timeout: 180000, label: 'Sonnet 4' },
   ]
 
   let lastError = ''
@@ -1287,7 +1325,7 @@ ${internalLinksBlock}
         },
         body: JSON.stringify({
           model: model.id,
-          max_tokens: 6000,
+          max_tokens: 4096,
           messages: [{ role: 'user', content: userPrompt }],
           system: systemPrompt
         }),
@@ -1325,15 +1363,33 @@ ${internalLinksBlock}
         jsonStr = cleanText.substring(firstBrace, lastBrace + 1)
       }
       
+      // ★ v7.8.1: parsed 변수를 먼저 선언 (temporal dead zone 방지)
+      let parsed: any = null
+
       if (!jsonStr) {
-        // ★ v7.5.1: max_tokens 잘림 복구 — {는 있는데 }가 없으면 복구 시도
-        if (firstBrace !== -1 && lastBrace <= firstBrace) {
-          // 잘린 JSON: content_html 필드를 수동 추출
+        // ★ v7.8.1: max_tokens 잘림 복구 강화 — 더 유연한 패턴 매칭
+        if (firstBrace !== -1) {
           const truncatedJson = cleanText.substring(firstBrace)
           const titleMatch = truncatedJson.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
           const slugMatch = truncatedJson.match(/"slug"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
           const metaMatch = truncatedJson.match(/"meta_description"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
-          const htmlMatch = truncatedJson.match(/"content_html"\s*:\s*"([\s\S]*?)"\s*,\s*"tags"/s)
+          // content_html 추출: "tags" 앞까지 또는 문자열 끝까지 (잘린 경우)
+          let htmlMatch = truncatedJson.match(/"content_html"\s*:\s*"([\s\S]*?)"\s*,\s*"tags"/s)
+          if (!htmlMatch) {
+            // 잘린 경우: content_html 시작점부터 끝까지 가져옴
+            htmlMatch = truncatedJson.match(/"content_html"\s*:\s*"([\s\S]+)/s)
+            if (htmlMatch) {
+              // 마지막 불완전한 태그 제거하고 정리
+              let html = htmlMatch[1]
+              // 마지막 닫히지 않은 따옴표/태그 정리
+              const lastClosingTag = html.lastIndexOf('</p>')
+              if (lastClosingTag > 0) {
+                html = html.substring(0, lastClosingTag + 4)
+              }
+              htmlMatch[1] = html
+              console.warn(`[Claude] ${model.label} 응답 잘림 → content_html 끝까지 추출 (${html.length}자)`)
+            }
+          }
           if (titleMatch && htmlMatch) {
             console.warn(`[Claude] ${model.label} 응답 잘림 → 수동 필드 추출로 복구`)
             parsed = {
@@ -1353,8 +1409,8 @@ ${internalLinksBlock}
         }
       }
 
-      // JSON 파싱 시도 — content_html 내부의 특수문자로 인한 파싱 오류 복구
-      let parsed: any
+      // JSON 파싱 시도 — jsonStr이 있고 parsed가 아직 없을 때만
+      if (jsonStr && !parsed) {
       try {
         parsed = JSON.parse(jsonStr)
       } catch (parseErr: any) {
@@ -1396,6 +1452,13 @@ ${internalLinksBlock}
           console.warn(`[Claude] ${lastError}`)
           continue
         }
+      }
+      } // if (jsonStr && !parsed)
+
+      if (!parsed) {
+        lastError = `JSON 파싱 최종 실패 (${model.label})`
+        console.warn(`[Claude] ${lastError}`)
+        continue
       }
 
       const contentHtml = parsed.content_html || ''
