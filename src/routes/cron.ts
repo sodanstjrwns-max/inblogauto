@@ -505,8 +505,8 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
   // count=1 (Cron 매 호출)에서도 매번 다른 주제가 나오도록 보장
   const keywords: any[] = []
 
-  // 차단 키워드 필터 (비용/보험 + 후기/추천 + 쓰레기 키워드)
-  const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|후기|리뷰|맛집|환절기|황사|알레르기|구내염|마스크\s*구취/
+  // 차단 키워드 필터 (비용/보험 + 후기/추천 + 쓰레기 키워드 + 커뮤니티명)
+  const COST_INSURANCE_FILTER = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|후기|리뷰|맛집|환절기|황사|알레르기|구내염|마스크\s*구취|더쿠|디시|디씨|에펨코리아|에펨|뽐뿌|클리앙|루리웹|인벤|오유|일베|여시|네이트판|mlbpark|dcinside|theqoo|fmkorea|ppomppu|clien|ruliweb|inven|todayhumor|ilbe|yesee|natepann|instiz|인스티즈|82cook|쿨앤조이|보배드림|뽐뿌닷컴|블라인드|blind/
 
   // subcategory 로테이션 인덱스 읽기 (DB 저장)
   const subcatIdxRow = await c.env.DB.prepare(

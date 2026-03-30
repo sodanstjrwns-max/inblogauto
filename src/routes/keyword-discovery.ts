@@ -26,7 +26,7 @@ async function fetchGoogleSuggestions(seed: string, lang: string = 'ko'): Promis
 }
 
 // ===== 2. 차단 필터 (강화) =====
-const BLOCKED_KEYWORD_PATTERNS = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|원\s*$|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|맛집|후기|리뷰|대출|보험사|자동차|부동산|주식|코인|다이어트|성형외과|피부과|한의원|약국|병원비|의료분쟁|환절기|황사|알레르기|구내염|마스크\s*구취/
+const BLOCKED_KEYWORD_PATTERNS = /비용|가격|할부|할인|보험|실비|실손|급여|비급여|건강보험|얼마|원\s*$|가격대|잘하는\s*(곳|치과)|추천\s*(병원|치과)|맛집|후기|리뷰|대출|보험사|자동차|부동산|주식|코인|다이어트|성형외과|피부과|한의원|약국|병원비|의료분쟁|환절기|황사|알레르기|구내염|마스크\s*구취|더쿠|디시|디씨|에펨코리아|에펨|뽐뿌|클리앙|루리웹|인벤|오유|일베|여시|네이트판|mlbpark|dcinside|theqoo|fmkorea|ppomppu|clien|ruliweb|inven|todayhumor|ilbe|yesee|natepann|instiz|인스티즈|82cook|쿨앤조이|보배드림|뽐뿌닷컴|블라인드|blind/
 
 function isBlockedKeyword(keyword: string): boolean {
   return BLOCKED_KEYWORD_PATTERNS.test(keyword.toLowerCase())
