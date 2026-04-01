@@ -9,6 +9,7 @@
     ]
   },
   "vars": {
-    "TARGET_URL": "https://inblogauto.pages.dev/api/cron/generate"
+    "TARGET_URL": "https://inblogauto.pages.dev/api/cron/generate",
+    "CRON_SECRET": "inblog-cron-2026-seoulmoon"
   }
 }
