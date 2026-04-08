@@ -39,8 +39,90 @@ app.route('/api/keyword-discovery', keywordDiscoveryRoutes)
 // cronHandler includes: POST / (generate), POST /publish-next, POST /generate-drafts, GET /draft-status
 app.route('/api/cron', cronHandler)
 
-// Health check
-app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
+// Health check + 자동 발행 트리거 (v7.10)
+// UptimeRobot 등 모니터링 서비스가 5분마다 호출 → 발행 시간인데 아직 안 했으면 자동 발행
+app.get('/api/health', async (c) => {
+  const now = new Date()
+  const kstHour = (now.getUTCHours() + 9) % 24
+  const kstDate = new Date(now.getTime() + 9 * 60 * 60 * 1000).toISOString().split('T')[0]
+  
+  let autoTriggerStatus = 'skip'
+  
+  try {
+    // 발행 시간대 체크: KST 07:00~09:59 또는 18:00~20:59
+    const isMorningWindow = kstHour >= 7 && kstHour <= 9
+    const isEveningWindow = kstHour >= 18 && kstHour <= 20
+    
+    if (isMorningWindow || isEveningWindow) {
+      const window = isMorningWindow ? 'morning' : 'evening'
+      
+      // auto_publish 설정 확인
+      const autoPublishRow = await c.env.DB.prepare(
+        "SELECT value FROM settings WHERE key = 'auto_publish'"
+      ).first()
+      const isAutoPublishEnabled = autoPublishRow?.value === 'true'
+      
+      if (isAutoPublishEnabled) {
+        // 오늘 발행 수 확인
+        const todayCount = await c.env.DB.prepare(
+          `SELECT COUNT(*) as cnt FROM contents 
+           WHERE status = 'published' AND date(created_at) = ?`
+        ).bind(kstDate).first()
+        const published = (todayCount as any)?.cnt || 0
+        
+        // 이 시간대에 이미 발행했는지 확인 (중복 방지)
+        const lockKey = `auto_trigger_${kstDate}_${window}`
+        const lockRow = await c.env.DB.prepare(
+          "SELECT value FROM settings WHERE key = ?"
+        ).bind(lockKey).first()
+        
+        if (!lockRow && published < 2) {
+          // 락 설정 (중복 실행 방지)
+          await c.env.DB.prepare(
+            "INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, 'done', datetime('now'))"
+          ).bind(lockKey).run()
+          
+          autoTriggerStatus = 'triggered'
+          
+          // waitUntil로 백그라운드 발행
+          c.executionCtx.waitUntil((async () => {
+            try {
+              const url = new URL(c.req.url)
+              const generateUrl = `${url.origin}/api/cron/generate`
+              
+              const resp = await fetch(generateUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ count: 1, manual: false, auto_publish: true }),
+              })
+              console.log(`[auto-trigger] ${window} 발행 완료: HTTP ${resp.status}`)
+            } catch (e: any) {
+              console.error(`[auto-trigger] ${window} 발행 실패:`, e.message)
+              // 실패 시 락 해제 (다음 health 호출에서 재시도)
+              await c.env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(lockKey).run()
+            }
+          })())
+        } else {
+          autoTriggerStatus = lockRow ? 'already_done' : `quota_full(${published}/2)`
+        }
+      } else {
+        autoTriggerStatus = 'auto_publish_disabled'
+      }
+    } else {
+      autoTriggerStatus = `outside_window(KST ${kstHour}:xx)`
+    }
+  } catch (e: any) {
+    autoTriggerStatus = `error: ${e.message}`
+  }
+  
+  return c.json({ 
+    status: 'ok', 
+    timestamp: now.toISOString(),
+    kst_hour: kstHour,
+    auto_trigger: autoTriggerStatus,
+    version: '7.10'
+  })
+})
 
 // IndexNow 키 파일 서빙 — 검색엔진이 키를 검증할 때 사용
 app.get('/api/indexnow/:key', async (c) => {

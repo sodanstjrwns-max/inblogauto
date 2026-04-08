@@ -1,0 +1,38 @@
+name: Auto Publish (하루 2회)
+
+on:
+  schedule:
+    # KST 07:00 = UTC 22:00 (전날)
+    - cron: '0 22 * * *'
+    # KST 18:00 = UTC 09:00
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # 수동 실행도 가능
+
+jobs:
+  trigger-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger auto-publish
+        run: |
+          echo "=== $(TZ=Asia/Seoul date) ==="
+          
+          RESPONSE=$(curl -s -X GET \
+            "https://inblogauto-cron.sodanstjrwns.workers.dev/cron?key=inblog-cron-2026-seoulmoon" \
+            --max-time 30)
+          
+          echo "Response: $RESPONSE"
+          
+          # 결과 확인
+          TRIGGERED=$(echo "$RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin).get('triggered','false'))" 2>/dev/null || echo "parse_error")
+          
+          if [ "$TRIGGERED" = "True" ]; then
+            echo "✅ 발행 트리거 성공"
+          else
+            echo "⚠️ 트리거 응답: $TRIGGERED"
+            echo "Fallback: health 엔드포인트로 auto-trigger 시도"
+            curl -s "https://inblogauto.pages.dev/api/health" --max-time 10
+          fi
+          
+          echo ""
+          echo "=== 완료 ==="
