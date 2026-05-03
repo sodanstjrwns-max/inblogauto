@@ -304,7 +304,7 @@ ${experienceMarkers.map((m, i) => `${i + 1}. "${m}"`).join('\n')}
   "differentiation_angle": "차별화 포인트 한 문장",
   "myth_correction": "교정한 오해 한 문장",
   "search_intent_sentence": "검색 의도 명시 문장"
-}\`
+}`
 }
 
 // GET /api/contents - 콘텐츠 목록 조회
