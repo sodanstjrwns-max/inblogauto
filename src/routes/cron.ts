@@ -332,7 +332,7 @@ cronApp.post('/generate', async (c) => {
 
     // waitUntil: 응답 반환 후에도 백그라운드에서 계속 실행
     // Pages Worker의 waitUntil은 wall-clock 무제한, CPU time만 제한
-    // Claude API 호출은 대부분 I/O 대기 → CPU time 거의 안 씀
+    // GPT API 호출은 대부분 I/O 대기 → CPU time 거의 안 씀
     c.executionCtx.waitUntil(
       executeGenerate(c, body, jobId).then(async () => {
         console.log(`[generate-async] ✅ ${jobId} 백그라운드 작업 완료`)
@@ -458,11 +458,14 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
     }
   }
 
-  // Claude API 키 확인
-  const claudeKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'claude_api_key'").first()
-  const claudeApiKey = claudeKeyRow?.value as string || c.env.CLAUDE_API_KEY || ''
-  if (!claudeApiKey) {
-    return c.json({ error: 'Claude API 키가 설정되지 않았습니다.' }, 400)
+  // OpenAI API 키 확인 (settings DB → env 순서로 폴백)
+  const openaiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'openai_api_key'").first()
+  const gptApiKey = openaiKeyRow?.value as string || c.env.OPENAI_API_KEY || c.env.GENSPARK_TOKEN || ''
+  // API base URL (Genspark proxy 또는 OpenAI 직접)
+  const openaiBaseRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'openai_base_url'").first()
+  const gptBaseUrl = openaiBaseRow?.value as string || 'https://www.genspark.ai/api/llm_proxy/v1'
+  if (!gptApiKey) {
+    return c.json({ error: 'OpenAI API 키가 설정되지 않았습니다. (settings → openai_api_key)' }, 400)
   }
 
   // 설정값 로드
@@ -660,15 +663,15 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
       const persona = getPatientPersona(kw.keyword, (todayCount?.cnt as number) || 0)
       console.log(`[페르소나] ${persona.age} / ${persona.trait} (${kw.keyword})`)
 
-      // Claude API 호출 (1회 — 내부에서 Opus→Sonnet 자동 폴백)
+      // GPT API 호출 (1회 — 내부에서 GPT 5.5→4o 자동 폴백)
       let bestContent: any = null
       let attempts = 1
 
       try {
-        const generated = await callClaude(
-          claudeApiKey, kw.keyword, region, disclaimer,
+        const generated = await callGPT(
+          gptApiKey, kw.keyword, region, disclaimer,
           classified.type, typeGuide, classified.question, classified.emotion,
-          existingPosts, titleFormula, persona
+          existingPosts, titleFormula, persona, gptBaseUrl
         )
         const seoScore = calculateSeoScore(generated, kw.keyword)
         bestContent = { ...generated, seo_score: seoScore, attempts }
@@ -678,115 +681,23 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
 
       if (!bestContent) throw new Error('콘텐츠 생성 실패')
 
-      // === 0.1단계: 콘텐츠 품질 검증 & 자동 교정 (v6.0) ===
+      // === 0.1단계: 품질 로깅 + 비용 금지어 필터 (v7.0 간소화) ===
       {
         const html = bestContent.content_html || ''
         const plain = html.replace(/<[^>]*>/g, '')
         const h2Count = (html.match(/<h2[^>]*>/gi) || []).length
         const faqCount = (bestContent.faq || []).length
-        const qualityIssues: string[] = []
-
-        // 1) 최소 길이 검증 (3000자 미만이면 경고)
-        if (plain.length < 2500) {
-          qualityIssues.push(`본문 ${plain.length}자 — 최소 3000자 권장`)
+        if (plain.length < 2500 || h2Count < 4 || faqCount < 3) {
+          console.warn(`[품질] ${kw.keyword}: ${plain.length}자, H2 ${h2Count}개, FAQ ${faqCount}개`)
         }
-
-        // 2) H2 개수 검증 (5~8개 범위)
-        if (h2Count < 4) {
-          qualityIssues.push(`H2 ${h2Count}개 — 최소 5개 필요`)
-        }
-
-        // 3) FAQ 검증 (5~7개)
-        if (faqCount < 3) {
-          qualityIssues.push(`FAQ ${faqCount}개 — 최소 5개 필요`)
-        }
-
-        // 4) 반복 문장 패턴 감지 & 자동 교정
-        let fixedHtml = html
-        // "~입니다." 4회 이상 연속 시 일부를 다양한 어미로 교체
-        const endingPattern = /(입니다\.\s*<)/g
-        const endings = ['이죠.</','편입니다.</','거든요.</','인 셈이죠.</']
-        let endingCount = 0
-        fixedHtml = fixedHtml.replace(endingPattern, (match) => {
-          endingCount++
-          if (endingCount % 4 === 0) {
-            return endings[endingCount % endings.length]
-          }
-          return match
-        })
-
-        // 5) 빈 H2 섹션 감지 (H2 바로 다음에 또 H2가 오는 경우)
-        fixedHtml = fixedHtml.replace(/<\/h2>\s*<h2/gi, '</h2>\n<p>이 부분은 개인의 구강 상태에 따라 달라질 수 있습니다. 치과의사와 상담을 통해 본인에게 맞는 방법을 확인해보세요.</p>\n<h2')
-
-        // 6) 비용 금지어 최종 점검
+        // 비용 금지어 FAQ 필터
         const COST_WORDS_STRICT = /만\s*원|가격|비용|보험\s*적용|실비|급여|비급여|건강보험|할부|할인|수가|본인부담|의료비|치료비/g
-        const costMatches = plain.match(COST_WORDS_STRICT)
-        if (costMatches) {
-          qualityIssues.push(`비용 금지어 ${costMatches.length}개 감지: ${costMatches.slice(0, 3).join(', ')}`)
-          // FAQ에서 비용 관련 항목 제거
-          if (bestContent.faq) {
-            bestContent.faq = bestContent.faq.filter((f: any) => 
-              !COST_WORDS_STRICT.test(f.q + f.a)
-            )
-          }
+        if (bestContent.faq) {
+          bestContent.faq = bestContent.faq.filter((f: any) => !COST_WORDS_STRICT.test(f.q + f.a))
         }
-
-        if (qualityIssues.length > 0) {
-          console.warn(`[품질검증] ${kw.keyword}: ${qualityIssues.join(' | ')}`)
-        }
-        bestContent.content_html = fixedHtml
-        bestContent.quality_issues = qualityIssues
       }
 
-      // === 0.2단계: 인터렉티브 요소 자동 보강 + 가독성 향상 (v7.0) ===
-      {
-        let html = bestContent.content_html || ''
-        const plain = html.replace(/<[^>]*>/g, '')
-
-        // 1) "이렇게 질문하세요" 박스 자동 삽입 — 없으면 2번째 H2 뒤에 삽입
-        if (!/질문해보세요|질문해\s*보세요|이렇게 질문/.test(plain)) {
-          const questionBoxHtml = `<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:8px;padding:16px;margin:16px 0"><strong>💡 치과에서 이렇게 질문해보세요</strong><br>• "제 경우에는 ${kw.keyword}이(가) 어떤가요?"<br>• "다른 옵션은 없나요? 장단점을 비교해주세요."<br>• "회복 기간은 현실적으로 얼마나 걸릴까요?"</div>`
-          const h2Positions: number[] = []
-          let sIdx = 0
-          while (true) {
-            const pos = html.indexOf('</h2>', sIdx)
-            if (pos === -1) break
-            h2Positions.push(pos + 5)
-            sIdx = pos + 1
-          }
-          // 2번째 H2 뒤에 삽입 (없으면 1번째)
-          const insertPos = h2Positions[Math.min(1, h2Positions.length - 1)]
-          if (insertPos) {
-            html = html.slice(0, insertPos) + '\n' + questionBoxHtml + html.slice(insertPos)
-          }
-        }
-
-        // 2) 핵심 요약 하이라이트 박스 — 마지막 H2 바로 앞에 삽입
-        if (!/핵심 요약|💎|한눈에 보기/.test(plain) && plain.length > 2000) {
-          // 핵심 키워드 3개를 본문에서 추출
-          const keyPhrases = [kw.keyword, classified.label, '치과의사 상담'].filter(Boolean)
-          const summaryBoxHtml = `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:16px;margin:20px 0"><strong>💎 핵심 요약</strong><br>• ${kw.keyword}: 개인의 구강 상태에 따라 방법과 기간이 달라집니다<br>• 정확한 판단은 CT 촬영 등 정밀 진단 후 가능합니다<br>• 궁금한 점은 미리 메모해서 상담 시 질문하세요</div>`
-          // FAQ H2 바로 앞에 삽입
-          const faqH2Idx = html.lastIndexOf('<h2')
-          if (faqH2Idx > 0) {
-            html = html.slice(0, faqH2Idx) + summaryBoxHtml + '\n' + html.slice(faqH2Idx)
-          }
-        }
-
-        // 3) 긴 단락(400자+) 자동 분할 — <p> 태그 내 400자 이상이면 중간에 <br><br> 삽입
-        html = html.replace(/<p([^>]*)>([\s\S]{400,}?)<\/p>/gi, (match, attrs, content) => {
-          // 문장 단위로 분할 (마침표+공백 기준)
-          const sentences = content.split(/(\. )/)
-          if (sentences.length <= 2) return match
-          const mid = Math.floor(sentences.length / 2)
-          const firstHalf = sentences.slice(0, mid).join('')
-          const secondHalf = sentences.slice(mid).join('')
-          return `<p${attrs}>${firstHalf.trim()}</p>\n<p${attrs}>${secondHalf.trim()}</p>`
-        })
-
-        bestContent.content_html = html
-        console.log(`[v7.0 인터렉티브] 자동 보강 완료 (${kw.keyword})`)
-      }
+      // 0.2단계 인터렉티브 자동삽입 제거됨 (v7.0) — GPT가 프롬프트에서 직접 생성
 
       // === 0.3단계: 실명(본명) 후처리 필터 — enhancements.ts 공유 모듈 사용 (v6.2) ===
       // ※ 저자(문석준 원장) 이름은 치환하지 않음!
@@ -799,7 +710,7 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
         bestContent.content_html = anonymizedHtml
       }
 
-      // === 0.5단계: 비용/보험 콘텐츠 후처리 (Claude가 여전히 삽입할 경우 제거) ===
+      // === 0.5단계: 비용/보험 콘텐츠 후처리 (LLM이 여전히 삽입할 경우 제거) ===
       const COST_REMOVAL_PATTERNS = [
         /보험\s*적용[^<]{0,100}/g,
         /실비[^<]{0,50}/g,
@@ -831,90 +742,11 @@ async function executeGenerate(c: any, body: any, asyncJobId?: string): Promise<
 
       const contentId = insertResult.meta.last_row_id as number
 
-      // === 2단계: AI 이미지 생성 (썸네일 + 본문 이미지) ===
-      // ★ v6.0: 이미지 생성은 전체 타임아웃 가드 적용 — 실패해도 콘텐츠는 무조건 성공
+      // === 이미지 생성 제거됨 (v7.0) — Inblog 자체 OG 이미지 활용 ===
       let thumbnailUrl = ''
-      const imgTimeoutMs = 90000 // 이미지 전체 프로세스 최대 90초
-      const imgStartTime = Date.now()
-      
-      // 2-A: 썸네일 (1200×630, OG 이미지용)
-      // ★ v7.5: 글 제목 기반 썸네일 — 키워드만으로 만들던 뻔한 이미지 탈피
-      try {
-        if (Date.now() - imgStartTime > imgTimeoutMs) throw new Error('이미지 타임아웃 가드')
-        const thumbnailScene = buildThumbnailScene(bestContent.title, kw.keyword, kw.category || 'general')
-        const thumbResult = await generateBodyImage(
-          c.env, thumbnailScene, bestContent.title, contentId, -1, 1200, 630
-        )
-        thumbnailUrl = thumbResult.url
-        
-        if (thumbnailUrl.startsWith('data:')) {
-          console.warn('[이미지] data URI 감지 → 플레이스홀더 폴백 전환')
-          thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
-        }
-      } catch (imgErr: any) {
-        console.error('이미지 생성 실패, 폴백 사용:', imgErr.message)
-        thumbnailUrl = `https://placehold.co/1200x630/e8f4fd/2563eb?text=${encodeURIComponent(kw.keyword)}&font=sans-serif`
-      }
-
-      // 2-B: 본문 내 이미지 자동 삽입 (IMAGE_SLOT 마커 교체)
-      // ★ v7.5: 역방향 이미지 생성 — Claude가 alt(한국어) + scene(영어) 분리 제공
-      // 새 형식: <!-- IMAGE_SLOT | alt: 한국어 설명 | scene: English scene --> 
-      // 레거시 형식: <!-- IMAGE_SLOT:설명 --> (하위 호환)
-      const newSlotRegex = /<!--\s*IMAGE_SLOT\s*\|\s*alt:\s*(.*?)\s*\|\s*scene:\s*(.*?)\s*-->/g
-      const legacySlotRegex = /<!--\s*IMAGE_SLOT:(.*?)\s*-->/g
-      const imageSlots: { marker: string; altText: string; scenePrompt: string }[] = []
-      let slotMatch
-      
-      // 새 형식 먼저 파싱
-      while ((slotMatch = newSlotRegex.exec(finalHtml)) !== null) {
-        imageSlots.push({
-          marker: slotMatch[0],
-          altText: slotMatch[1].trim(),
-          scenePrompt: slotMatch[2].trim()
-        })
-      }
-      // 레거시 형식 폴백 (새 형식이 없을 때만)
-      if (imageSlots.length === 0) {
-        while ((slotMatch = legacySlotRegex.exec(finalHtml)) !== null) {
-          const desc = slotMatch[1].trim()
-          imageSlots.push({
-            marker: slotMatch[0],
-            altText: desc,
-            scenePrompt: buildSceneFromDescription(desc, kw.keyword)
-          })
-        }
-      }
-      
-      // 최대 2장까지 본문 이미지 생성 (Workers 타임아웃 대응)
-      const imgElapsed = Date.now() - imgStartTime
-      const maxBodyImages = imgElapsed > 60000 ? 0 : Math.min(imageSlots.length, 2)
-      if (maxBodyImages === 0 && imageSlots.length > 0) {
-        console.warn(`[본문이미지] 시간 초과(${Math.round(imgElapsed/1000)}s) → 본문 이미지 스킵`)
-      }
-      for (let imgIdx = 0; imgIdx < maxBodyImages; imgIdx++) {
-        const slot = imageSlots[imgIdx]
-        try {
-          const bodyImgResult = await generateBodyImage(
-            c.env, slot.scenePrompt, slot.altText, contentId, imgIdx
-          )
-          if (bodyImgResult.url) {
-            const imgHtml = `<figure style="margin:24px 0"><img src="${bodyImgResult.url}" alt="${slot.altText}" style="width:100%;border-radius:8px;max-height:500px;object-fit:cover" loading="lazy"><figcaption style="text-align:center;font-size:13px;color:#888;margin-top:8px">▲ ${slot.altText}</figcaption></figure>`
-            finalHtml = finalHtml.replace(slot.marker, imgHtml)
-            console.log(`[본문이미지] ${imgIdx + 1}/${maxBodyImages} 삽입 완료: ${slot.altText.substring(0, 40)}`)
-          }
-        } catch (bodyImgErr: any) {
-          console.warn(`[본문이미지] ${imgIdx + 1} 생성 실패, 마커 제거:`, bodyImgErr.message)
-          finalHtml = finalHtml.replace(slot.marker, '')
-        }
-      }
-      // 남은 미처리 슬롯 제거
+      // IMAGE_SLOT 마커가 남아있으면 제거
       finalHtml = finalHtml.replace(/<!--\s*IMAGE_SLOT\s*\|.*?-->/g, '')
       finalHtml = finalHtml.replace(/<!--\s*IMAGE_SLOT:.*?\s*-->/g, '')
-
-      // === 3단계: 썸네일 기반 대표 이미지 삽입 ===
-      // ★ v7.5: 썸네일 alt도 제목 기반으로 구체적으로 생성
-      const thumbnailAlt = bestContent.title ? `${bestContent.title} - ${kw.keyword} 관련 치과 정보` : `${kw.keyword} 대표 이미지`
-      finalHtml = `<figure style="margin:0 0 24px 0"><img src="${thumbnailUrl}" alt="${thumbnailAlt}" style="width:100%;border-radius:8px;max-height:400px;object-fit:cover" loading="lazy"></figure>` + finalHtml
 
       // === 3.5단계: 내부 링크 자동 삽입 ===
       if (existingPosts.length > 0) {
@@ -974,50 +806,9 @@ ${tocItems}</ol>
         console.log(`[TOC] 목차 ${tocH2Matches.length}개 항목 삽입 완료`)
       }
 
-      // === 3.8단계: 소프트 CTA 자동 삽입 (의료 면책 조항 바로 위) ===
-      const CTA_TEMPLATES = [
-        {
-          emoji: '💬',
-          heading: '이 글이 도움이 되셨나요?',
-          body: `${kw.keyword}에 대해 더 궁금한 점이 있으시다면, 가까운 치과에 방문하여 치과의사와 상담해보세요. 정확한 진단을 받으면 막연한 걱정이 구체적인 계획으로 바뀝니다.`,
-          action: '📌 이 글을 저장해두시면 나중에 치과 방문 시 참고하실 수 있습니다.'
-        },
-        {
-          emoji: '🔖',
-          heading: '다음에 치과 방문하실 때 기억하세요',
-          body: `오늘 읽으신 ${kw.keyword} 정보를 바탕으로, 치과에서 "제 경우에는 어떤가요?"라고 한 번 물어보세요. 본인의 상황에 맞는 구체적인 답변을 받으실 수 있습니다.`,
-          action: '📌 궁금한 점을 미리 메모해서 가시면 상담이 훨씬 효율적입니다.'
-        },
-        {
-          emoji: '✅',
-          heading: '마지막으로 한 가지 더',
-          body: `${kw.keyword}에 관한 정보는 시간이 지나면 달라질 수 있습니다. 최신 치료법과 본인에게 맞는 방법은 반드시 치과의사와 직접 확인하시기 바랍니다.`,
-          action: '📌 주변에 같은 고민을 가진 분이 계시다면 이 글을 공유해주세요.'
-        }
-      ]
-      const ctaIndex = contentId % CTA_TEMPLATES.length
-      const cta = CTA_TEMPLATES[ctaIndex]
-      const ctaHtml = `\n<div style="background:linear-gradient(135deg,#f0f9ff 0%,#e0f2fe 100%);border:1px solid #bae6fd;border-radius:12px;padding:24px 28px;margin:32px 0 24px 0">
-<p style="font-weight:700;font-size:17px;color:#0369a1;margin:0 0 12px 0">${cta.emoji} ${cta.heading}</p>
-<p style="font-size:15px;color:#334155;line-height:1.7;margin:0 0 12px 0">${cta.body}</p>
-<p style="font-size:14px;color:#0369a1;margin:0;font-weight:500">${cta.action}</p>
-</div>\n`
-      // 의료 면책 div 앞에 삽입
-      const disclaimerDivIdx = finalHtml.indexOf('<div style="background:#f0f7ff')
-      if (disclaimerDivIdx !== -1) {
-        finalHtml = finalHtml.slice(0, disclaimerDivIdx) + ctaHtml + finalHtml.slice(disclaimerDivIdx)
-      } else {
-        // 면책 div 없으면 schema script 앞에 삽입
-        const schemaIdx = finalHtml.indexOf('<script type="application/ld+json">')
-        if (schemaIdx !== -1) {
-          finalHtml = finalHtml.slice(0, schemaIdx) + ctaHtml + finalHtml.slice(schemaIdx)
-        } else {
-          finalHtml += ctaHtml
-        }
-      }
-      console.log(`[CTA] 소프트 CTA 삽입 완료 (템플릿 #${ctaIndex + 1})`)
+      // 3.8단계 CTA 자동삽입 제거됨 (v7.0)
 
-      // DB 업데이트 (이미지 URL + 내부 링크 + Schema + TOC + CTA 포함 최종 HTML)
+      // DB 업데이트 (내부 링크 + Schema + TOC 포함 최종 HTML)
       await c.env.DB.prepare(
         `UPDATE contents SET content_html = ?, thumbnail_url = ? WHERE id = ?`
       ).bind(finalHtml, thumbnailUrl, contentId).run()
@@ -1171,13 +962,14 @@ ${tocItems}</ol>
   }
 }
 
-// ===== Claude API 호출 (v5.1 — 절대 스팸 불가 + 제목 사후검증 + 남용키워드/지역명/연도 자동제거) =====
-async function callClaude(
+// ===== GPT API 호출 (v8.0 — OpenAI-compatible, Genspark proxy 지원) =====
+async function callGPT(
   apiKey: string, keyword: string, region: string, disclaimer: string,
   contentType: string, typeGuide: string, patientQuestion: string, emotion?: string,
   existingPosts?: { title: string; slug: string; keyword: string; category: string }[],
   titleFormula?: { pattern: string; example: string; emotion: string },
-  persona?: { age: string; trait: string; situation: string; context: string }
+  persona?: { age: string; trait: string; situation: string; context: string },
+  baseUrl?: string
 ) {
   const systemPrompt = buildSystemPrompt(keyword, contentType as any, typeGuide, patientQuestion, disclaimer, emotion)
 
@@ -1305,46 +1097,49 @@ ${internalLinksBlock}
 
 위 규칙에 따라 유효한 JSON만 출력하세요.`
 
-  // ★ v7.8.1: Sonnet 4.5 우선 — 최신 모델로 속도와 품질 개선
-  // max_tokens 4096으로 줄여 응답 시간 단축 (Workers wall-clock 제한 대응)
+  // ★ v8.0: GPT 5.5 우선, gpt-4o 폴백 — OpenAI-compatible API (Genspark proxy 지원)
+  const apiBase = baseUrl || 'https://www.genspark.ai/api/llm_proxy/v1'
   const models = [
-    { id: 'claude-sonnet-4-5-20250929', timeout: 180000, label: 'Sonnet 4.5' },
-    { id: 'claude-sonnet-4-20250514', timeout: 180000, label: 'Sonnet 4' },
+    { id: 'gpt-5.5', timeout: 180000, label: 'GPT 5.5' },
+    { id: 'gpt-4o', timeout: 180000, label: 'GPT 4o' },
   ]
 
   let lastError = ''
   for (const model of models) {
     try {
-      console.log(`[Claude] ${model.label} 시도 중... (timeout: ${model.timeout / 1000}s)`)
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      console.log(`[GPT] ${model.label} 시도 중... (timeout: ${model.timeout / 1000}s, base: ${apiBase})`)
+      const response = await fetch(`${apiBase}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01'
+          'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model: model.id,
           max_tokens: 4096,
-          messages: [{ role: 'user', content: userPrompt }],
-          system: systemPrompt
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.7,
+          response_format: { type: 'json_object' }
         }),
         signal: AbortSignal.timeout(model.timeout)
       })
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '')
-        lastError = `Claude API ${response.status} (${model.label}): ${errText.slice(0, 200)}`
-        console.warn(`[Claude] ${model.label} 실패: ${lastError}`)
+        lastError = `GPT API ${response.status} (${model.label}): ${errText.slice(0, 200)}`
+        console.warn(`[GPT] ${model.label} 실패: ${lastError}`)
         continue // 다음 모델로 폴백
       }
 
       const data: any = await response.json()
-      const text = data.content?.[0]?.text || ''
-      console.log(`[Claude] ${model.label} 응답 길이: ${text.length}자, 앞 200자: ${text.substring(0, 200)}`)
+      const text = data.choices?.[0]?.message?.content || ''
+      console.log(`[GPT] ${model.label} 응답 길이: ${text.length}자, 앞 200자: ${text.substring(0, 200)}`)
       
       // JSON 추출: 코드블록 제거 후 최외곽 {..} 추출
-      // Claude가 ```json ... ``` 로 감싸거나 직접 JSON을 출력함
+      // GPT가 ```json ... ``` 로 감싸거나 직접 JSON을 출력할 수 있음
       let cleanText = text.trim()
       // 1) ```json ... ``` 코드블록 전체 제거 (여러 종류 대응)
       // 패턴: ``` 또는 ```json 으로 시작, ``` 으로 끝
@@ -1387,11 +1182,11 @@ ${internalLinksBlock}
                 html = html.substring(0, lastClosingTag + 4)
               }
               htmlMatch[1] = html
-              console.warn(`[Claude] ${model.label} 응답 잘림 → content_html 끝까지 추출 (${html.length}자)`)
+              console.warn(`[GPT] ${model.label} 응답 잘림 → content_html 끝까지 추출 (${html.length}자)`)
             }
           }
           if (titleMatch && htmlMatch) {
-            console.warn(`[Claude] ${model.label} 응답 잘림 → 수동 필드 추출로 복구`)
+            console.warn(`[GPT] ${model.label} 응답 잘림 → 수동 필드 추출로 복구`)
             parsed = {
               title: titleMatch[1],
               slug: slugMatch ? slugMatch[1] : keyword.replace(/\s+/g, '-').toLowerCase(),
@@ -1404,7 +1199,7 @@ ${internalLinksBlock}
         }
         if (!parsed) {
           lastError = `JSON 파싱 실패 (${model.label}) — 응답: ${text.substring(0, 300)}`
-          console.warn(`[Claude] ${lastError}`)
+          console.warn(`[GPT] ${lastError}`)
           continue
         }
       }
@@ -1414,7 +1209,7 @@ ${internalLinksBlock}
       try {
         parsed = JSON.parse(jsonStr)
       } catch (parseErr: any) {
-        console.warn(`[Claude] ${model.label} JSON 직접 파싱 실패: ${parseErr.message}, 복구 시도...`)
+        console.warn(`[GPT] ${model.label} JSON 직접 파싱 실패: ${parseErr.message}, 복구 시도...`)
         // content_html 필드를 수동 추출하여 복구
         try {
           const titleMatch = jsonStr.match(/"title"\s*:\s*"((?:[^"\\]|\\.)*)"/s)
@@ -1441,15 +1236,15 @@ ${internalLinksBlock}
             if (faqMatch) {
               try { parsed.faq = JSON.parse(`[${faqMatch[1]}]`) } catch {}
             }
-            console.log(`[Claude] ${model.label} JSON 복구 성공!`)
+            console.log(`[GPT] ${model.label} JSON 복구 성공!`)
           } else {
             lastError = `JSON 복구 실패 (${model.label}): ${parseErr.message}`
-            console.warn(`[Claude] ${lastError}`)
+            console.warn(`[GPT] ${lastError}`)
             continue
           }
         } catch (recoveryErr: any) {
           lastError = `JSON 복구 예외 (${model.label}): ${recoveryErr.message}`
-          console.warn(`[Claude] ${lastError}`)
+          console.warn(`[GPT] ${lastError}`)
           continue
         }
       }
@@ -1457,13 +1252,13 @@ ${internalLinksBlock}
 
       if (!parsed) {
         lastError = `JSON 파싱 최종 실패 (${model.label})`
-        console.warn(`[Claude] ${lastError}`)
+        console.warn(`[GPT] ${lastError}`)
         continue
       }
 
       const contentHtml = parsed.content_html || ''
       const plainText = contentHtml.replace(/<[^>]*>/g, '')
-      console.log(`[Claude] ${model.label} 성공! (${plainText.length}자)`)
+      console.log(`[GPT] ${model.label} 성공! (${plainText.length}자)`)
 
       // === v5.1: 제목 사후검증 — 남용 키워드 자동 제거 ===
       let finalTitle = parsed.title || keyword
@@ -1495,7 +1290,7 @@ ${internalLinksBlock}
         }
       }
 
-      // === v5.2: 범위 명시 박스 사후 검증 — Claude가 빠뜨렸을 때 자동 삽입 ===
+      // === v5.2: 범위 명시 박스 사후 검증 — LLM이 빠뜨렸을 때 자동 삽입 ===
       let finalHtml = contentHtml
       const hasScopeNotice = /이 글의 범위|이 글에서 다루지 않|다루는 것|다루지 않는 것/.test(plainText)
       if (!hasScopeNotice) {
@@ -1524,7 +1319,7 @@ ${internalLinksBlock}
         console.warn(`[v5.2 차별화검증] differentiation_angle 필드 없음 또는 부족`)
       }
 
-      // === v5.3: 오해 교정 섹션 사후 검증 — Claude가 빠뜨렸을 때 자동 삽입 ===
+      // === v5.3: 오해 교정 섹션 사후 검증 — LLM이 빠뜨렸을 때 자동 삽입 ===
       const finalPlainText = finalHtml.replace(/<[^>]*>/g, '')
       const hasMythCorrection = /오해.*사실|잘못\s*알|실제로는|사실은\s*그렇지|❌.*✅|흔히.*생각.*하지만/.test(finalPlainText)
       if (!hasMythCorrection) {
@@ -1573,12 +1368,12 @@ ${internalLinksBlock}
       }
     } catch (e: any) {
       lastError = `${model.label} 오류: ${e.message}`
-      console.warn(`[Claude] ${lastError}`)
+      console.warn(`[GPT] ${lastError}`)
       continue // 타임아웃 등 → 다음 모델로 폴백
     }
   }
 
-  throw new Error(`모든 Claude 모델 실패: ${lastError}`)
+  throw new Error(`모든 GPT 모델 실패: ${lastError}`)
 }
 
 // ===== POST /api/cron/publish-next — draft 1개를 인블로그에 발행 (v6.0 — 안정화 강화) =====
@@ -2019,159 +1814,8 @@ cronApp.get('/draft-status', async (c) => {
 
 const cronHandler = cronApp
 
-// ===== 본문 이미지 생성 (섹션별 맞춤 프롬프트, 1200×800) =====
-// ★ v7.5: 통합 이미지 생성 함수 (scene 프롬프트 직접 사용)
-// scenePrompt: Claude가 생성한 영어 장면 묘사 또는 buildThumbnailScene 결과
-// altText: 한국어 alt 태그 (로그/폴백용)
-// width/height: 기본 1200x800, 썸네일은 1200x630
-async function generateBodyImage(
-  env: any, scenePrompt: string, altText: string, contentId: number, imageIndex: number,
-  width: number = 1200, height: number = 800
-): Promise<{ url: string }> {
-  const noText = 'absolutely no text, no letters, no words, no numbers, no labels, no captions, no watermarks anywhere in the image'
-  const safetyGuard = 'no blood, no surgical wounds, no scary medical imagery, no close-up of real teeth, no fake 3D implant renders'
-  const styleGuide = 'warm reassuring medical atmosphere, soft natural lighting, clean modern aesthetic, professional healthcare environment, 8k quality, photorealistic'
-  
-  const prompt = `${scenePrompt}. ${styleGuide}, ${safetyGuard}, ${noText}.`
+// ===== 이미지 생성 함수들 제거됨 (v7.0) — Inblog 자체 OG 이미지 활용 =====
 
-  // fal.ai API 키
-  let falApiKey = ''
-  try {
-    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'fal_api_key'").first()
-    falApiKey = row?.value as string || ''
-  } catch (e: any) {
-    console.warn('[이미지] fal API 키 조회 실패:', e.message || e)
-  }
-
-  if (falApiKey) {
-    const models = [
-      { name: 'FLUX.2 pro', url: 'https://fal.run/fal-ai/flux-pro/v1.1-ultra', body: { prompt, image_size: { width, height }, num_images: 1, safety_tolerance: '5', output_format: 'jpeg' } },
-      { name: 'FLUX.1 schnell', url: 'https://fal.run/fal-ai/flux/schnell', body: { prompt, image_size: { width, height }, num_images: 1, enable_safety_checker: false } }
-    ]
-
-    for (const model of models) {
-      try {
-        const res = await fetch(model.url, {
-          method: 'POST',
-          headers: { 'Authorization': `Key ${falApiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(model.body),
-          signal: AbortSignal.timeout(45000)
-        })
-        if (res.ok) {
-          const data: any = await res.json()
-          const imageUrl = data?.images?.[0]?.url
-          if (imageUrl) {
-            // R2 백업
-            if (env?.R2) {
-              try {
-                const imgRes = await fetch(imageUrl, { signal: AbortSignal.timeout(10000) })
-                if (imgRes.ok) {
-                  const buf = await imgRes.arrayBuffer()
-                  const imgType = imageIndex === -1 ? 'thumbnail' : `body_${imageIndex}`
-                  const key = `images/${contentId}/${imgType}.jpg`
-                  await env.R2.put(key, buf, { httpMetadata: { contentType: 'image/jpeg' }, customMetadata: { alt: altText.substring(0, 200), prompt: prompt.substring(0, 200) } })
-                  console.log(`[이미지] R2 백업 저장 완료: ${imgType}`)
-                }
-              } catch (r2Err: any) {
-                console.warn(`[이미지] R2 백업 실패 (무시): ${r2Err.message}`)
-              }
-            }
-            return { url: imageUrl }
-          }
-        }
-      } catch (e: any) {
-        console.warn(`[이미지] ${model.name} 실패: ${e.message}`)
-        continue
-      }
-    }
-  }
-
-  // 폴백: 플레이스홀더
-  console.warn(`[이미지] fal.ai 전체 실패 → 플레이스홀더 사용`)
-  const colors = ['4A90D9', '5B8C5A', '8B5CF6', 'D97706', '0891B2', '7C3AED', '059669']
-  const colorIdx = Math.abs(Date.now() + (imageIndex >= 0 ? imageIndex : 99)) % colors.length
-  return { url: `https://placehold.co/${width}x${height}/${colors[colorIdx]}/ffffff?text=${encodeURIComponent(altText.substring(0, 30))}&font=sans-serif` }
-}
-
-// ★ v7.5: 레거시 IMAGE_SLOT 설명 → 영어 scene 변환 (하위 호환)
-function buildSceneFromDescription(description: string, keyword: string): string {
-  const desc = description.toLowerCase()
-  
-  // 키워드 기반 기본 장면 매핑
-  if (/상담|설명|안내/.test(desc)) return `A dentist's hands gesturing while explaining to a patient using a dental jaw model on a desk, warm clinic interior with soft lighting, blurred modern dental office background, reassuring professional atmosphere, no visible faces`
-  if (/치료|과정|시술/.test(desc)) return `Modern dental treatment room with a comfortable dental chair, organized dental instruments on a tray, warm ambient lighting, clean medical environment, calming atmosphere, no patient visible`
-  if (/비교|차이|vs/.test(desc)) return `Two dental restoration options displayed side by side on a clean white surface, soft studio lighting, medical comparison concept, clean infographic style, professional dental photography`
-  if (/회복|관리|유지/.test(desc)) return `A person gently touching their healthy smile area (lower face only, no eyes), fresh morning light, bathroom mirror reflection, daily oral care routine concept, warm reassuring feeling`
-  if (/통증|아프|불편/.test(desc)) return `A cozy dental consultation room with a calming blue and white color scheme, a glass of water on the table, soft cushioned chair, warm natural light from window, soothing medical environment`
-  if (/검사|진단|엑스레이/.test(desc)) return `A modern dental clinic consultation desk with a computer monitor showing dental imagery (blurred), a dentist's notepad and pen, warm professional lighting, clean organized workspace`
-  
-  // 기본 폴백
-  return `A warm inviting dental clinic reception area with modern interior design, comfortable seating, soft natural lighting, potted green plants, clean professional healthcare environment, related to ${keyword}`
-}
-
-// ★ v7.5: 글 제목 기반 썸네일 scene 생성
-function buildThumbnailScene(title: string, keyword: string, category: string): string {
-  const kw = keyword.toLowerCase()
-  const t = title.toLowerCase()
-  
-  // 제목/키워드 기반 구체적 장면 매핑
-  if (/임플란트/.test(kw)) {
-    if (/회복|관리|주의/.test(t)) return `Overhead view of a dental care package on a clean white table: a soft toothbrush, gentle mouthwash bottle, ice pack, and a small note card, warm natural lighting, recovery concept`
-    if (/비교|vs|브릿지|틀니/.test(t)) return `Two dental jaw models side by side on a dentist's desk showing different restoration options, one with implant and one with bridge, clean professional lighting, comparison concept`
-    if (/과정|단계|수술/.test(t)) return `A modern dental consultation room with a large wall-mounted monitor, a dentist's hand pointing at it, comfortable patient chair visible, clean medical environment, step-by-step concept`
-    return `Close-up of a dentist's hands holding a detailed dental jaw model, showing implant area, warm clinic lighting, blurred dental office background, professional caring atmosphere`
-  }
-  if (/교정|인비절라인|투명/.test(kw)) {
-    return `Clear dental aligners resting on a clean white marble surface next to their carrying case, soft window light, minimal clean aesthetic, orthodontic treatment concept`
-  }
-  if (/사랑니|발치/.test(kw)) {
-    return `A calming dental consultation desk with a glass of water, a dental mirror, and a small anatomical tooth model, warm soft lighting, reassuring medical atmosphere`
-  }
-  if (/신경치료|근관/.test(kw)) {
-    return `A dental microscope in a modern endodontic treatment room, soft blue ambient lighting, organized precision instruments, high-tech medical environment, professional atmosphere`
-  }
-  if (/잇몸|치주/.test(kw)) {
-    return `A soft-bristled toothbrush and interdental brushes arranged neatly on a clean bathroom counter, fresh morning light, daily gum care routine concept, warm welcoming feel`
-  }
-  if (/크라운|오버레이|인레이/.test(kw)) {
-    return `A dentist's gloved hands carefully examining a dental crown under a magnifying lamp, clean workstation, precision dental craftsmanship concept, warm professional lighting`
-  }
-  if (/미백|라미네이트|심미/.test(kw)) {
-    return `A bright modern dental cosmetic consultation room with a shade guide on the desk, natural sunlight streaming in, fresh clean aesthetic, cosmetic dentistry concept`
-  }
-  if (/충치|보존|레진/.test(kw)) {
-    return `A dental mirror reflecting healthy teeth, placed on a clean white surface next to a small dental model, soft studio lighting, preventive care concept, warm reassuring atmosphere`
-  }
-  if (/스케일링|예방|검진/.test(kw)) {
-    return `A bright welcoming dental hygiene room with ultrasonic scaling equipment neatly arranged, large window with natural light, potted plant on windowsill, preventive care environment`
-  }
-  if (/통증|치통|아프/.test(kw)) {
-    return `A warm cup of tea and a cold compress on a cozy bedside table, soft lamp light, comforting home care scene, gentle soothing atmosphere for dental pain relief concept`
-  }
-  if (/균열|크랙|깨/.test(kw)) {
-    return `A dental loupe and mirror placed on a professional dental tray, a small tooth model nearby, sharp detailed lighting, diagnostic precision concept, modern endodontic setting`
-  }
-  if (/턱관절|이갈이/.test(kw)) {
-    return `A dental night guard resting on its clean case next to a bedside table, soft evening lamp light, sleep health and TMJ care concept, calming bedroom atmosphere`
-  }
-  if (/소아|아이|어린이/.test(kw)) {
-    return `A colorful child-friendly dental clinic waiting area with playful decorations, small chairs, children's books, warm cheerful lighting, welcoming pediatric dentistry environment`
-  }
-  
-  // 카테고리 기반 폴백
-  const categoryScenes: Record<string, string> = {
-    implant: `A modern dental implant consultation room with anatomical models on the desk, warm professional lighting, clean medical environment`,
-    orthodontics: `Clear aligners and orthodontic tools on a clean bright dental desk, modern clinic aesthetic, organized professional environment`,
-    general: `A welcoming modern dental clinic reception with comfortable seating, soft natural lighting, green plants, clean professional healthcare atmosphere`,
-    prevention: `Daily oral care items beautifully arranged on a bathroom counter, toothbrush, floss, mouthwash, fresh morning light, healthy routine concept`,
-  }
-  
-  return categoryScenes[category] || categoryScenes.general
-}
-
-// ===== v7.5: 기존 이미지 시스템 제거 — generateBodyImage + buildThumbnailScene으로 통합 =====
-// buildImagePrompt, getImageCaption, saveImageToStorage, generateAIImage, hashString 모두 제거됨
-// 새 시스템: Claude가 alt(한국어) + scene(영어) 분리 제공 → scene을 직접 프롬프트로 사용
 
 // ===== 검색엔진 즉시 색인 요청 (IndexNow + Google Ping) =====
 // IndexNow: Bing, Naver, Yandex, DuckDuckGo 즉시 색인

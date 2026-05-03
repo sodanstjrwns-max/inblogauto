@@ -12,9 +12,10 @@ import { enhancementRoutes } from './routes/enhancements'
 import { keywordDiscoveryRoutes } from './routes/keyword-discovery'
 export type Bindings = {
   DB: D1Database
-  CLAUDE_API_KEY: string
+  OPENAI_API_KEY: string
+  CLAUDE_API_KEY: string  // deprecated — kept for backward compat
   INBLOG_API_KEY: string
-  THUMBNAIL_API_KEY: string
+  GENSPARK_TOKEN?: string
   AI?: any  // Cloudflare Workers AI (optional)
   R2?: R2Bucket  // Cloudflare R2 Storage (optional)
 }
@@ -2057,9 +2058,10 @@ function getIndexHtml(): string {
             </div>
           </div>
           <div class="card p-6">
-            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-robot mr-2 text-primary-500"></i>Claude API</h3>
+            <h3 class="font-semibold text-gray-900 mb-4"><i class="fas fa-robot mr-2 text-primary-500"></i>OpenAI API</h3>
             <div class="space-y-4">
-              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API \ud0a4</label><input id="set-claude-key" type="password" value="\${getValue('claude_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-ant-..."></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">API \ud0a4</label><input id="set-openai-key" type="password" value="\${getValue('openai_api_key')}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="sk-..."></div>
+              <div><label class="text-sm font-medium text-gray-700 mb-1 block">Base URL</label><input id="set-openai-base" type="text" value="\${getValue('openai_base_url') || 'https://www.genspark.ai/api/llm_proxy/v1'}" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono" placeholder="https://www.genspark.ai/api/llm_proxy/v1"></div>
             </div>
           </div>
           <div class="card p-6">
@@ -2121,7 +2123,8 @@ function getIndexHtml(): string {
     async function saveSettings() {
       const settings = [
         { key: 'inblog_api_key', value: document.getElementById('set-inblog-key').value },
-        { key: 'claude_api_key', value: document.getElementById('set-claude-key').value },
+        { key: 'openai_api_key', value: document.getElementById('set-openai-key').value },
+        { key: 'openai_base_url', value: document.getElementById('set-openai-base').value },
         { key: 'fal_api_key', value: document.getElementById('set-fal-key').value },
         { key: 'clinic_name', value: document.getElementById('set-clinic-name').value },
         { key: 'clinic_region', value: document.getElementById('set-clinic-region').value },

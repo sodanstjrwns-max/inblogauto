@@ -1659,7 +1659,7 @@ enhancementRoutes.post('/retrofit', async (c) => {
 // 13. A/B 타이틀 테스팅 시스템
 // ======================================================================
 
-// POST /api/enhancements/ab-test/generate — 타이틀 변형 생성 (Claude 기반)
+// POST /api/enhancements/ab-test/generate — 타이틀 변형 생성 (GPT 기반)
 enhancementRoutes.post('/ab-test/generate', async (c) => {
   const body = await c.req.json()
   const contentId = (body as any).content_id
@@ -1681,23 +1681,24 @@ enhancementRoutes.post('/ab-test/generate', async (c) => {
     return c.json({ message: '이미 변형이 존재합니다', variants: variants.results })
   }
   
-  // Claude로 타이틀 변형 3개 생성
-  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'claude_api_key'").first()
-  const claudeKey = apiKeyRow?.value as string || c.env.CLAUDE_API_KEY || ''
+  // GPT로 타이틀 변형 3개 생성
+  const apiKeyRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'openai_api_key'").first()
+  const gptKey = apiKeyRow?.value as string || c.env.OPENAI_API_KEY || ''
+  const baseUrlRow = await c.env.DB.prepare("SELECT value FROM settings WHERE key = 'openai_base_url'").first()
+  const gptBaseUrl = baseUrlRow?.value as string || 'https://www.genspark.ai/api/llm_proxy/v1'
   
   let variantTitles: string[] = [content.title] // A = 원본
   
-  if (claudeKey) {
+  if (gptKey) {
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
+      const response = await fetch(`${gptBaseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-key': claudeKey,
-          'anthropic-version': '2023-06-01'
+          'Authorization': `Bearer ${gptKey}`
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+          model: 'gpt-4o',
           max_tokens: 500,
           messages: [{
             role: 'user',
@@ -1713,13 +1714,14 @@ enhancementRoutes.post('/ab-test/generate', async (c) => {
 4. 구글 검색 CTR을 높이는 데 초점
 
 JSON으로만 답변: {"b": "변형B 제목", "c": "변형C 제목"}`
-          }]
+          }],
+          response_format: { type: 'json_object' }
         })
       })
       
       if (response.ok) {
         const data = await response.json() as any
-        const text = data.content?.[0]?.text || ''
+        const text = data.choices?.[0]?.message?.content || ''
         try {
           const jsonStr = text.match(/\{[\s\S]*\}/)?.[0] || ''
           const parsed = JSON.parse(jsonStr)
@@ -1732,7 +1734,7 @@ JSON으로만 답변: {"b": "변형B 제목", "c": "변형C 제목"}`
     }
   }
   
-  // 수동 변형 (Claude 실패 시 폴백)
+  // 수동 변형 (GPT 실패 시 폴백)
   if (variantTitles.length < 3) {
     const kw = content.keyword_text
     const patterns = [
